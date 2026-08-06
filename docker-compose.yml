@@ -1,0 +1,182 @@
+# =============================================================================
+# FASTAPI SERVICE
+#
+# This Compose file starts only the FastAPI application.
+#
+# It does not create or manage:
+#
+# - MySQL
+# - PostgreSQL
+# - Microsoft SQL Server
+# - MongoDB
+# - Redis
+# - Celery workers
+# - Celery Beat
+#
+# External infrastructure must be reachable through URLs configured in .env.
+# =============================================================================
+
+services:
+  api:
+    # =========================================================================
+    # IMAGE BUILD
+    # =========================================================================
+
+    build:
+      # Use the current project directory as the Docker build context.
+      context: .
+
+      # Use the production-oriented Dockerfile in the project root.
+      dockerfile: Dockerfile
+
+    # Give the generated image a reusable local name.
+    image: fastapi-service:latest
+
+    # Give the running container a predictable name.
+    container_name: fastapi-service
+
+    # =========================================================================
+    # PROCESS AND RESTART BEHAVIOR
+    # =========================================================================
+
+    # Restart automatically after unexpected process or host failures.
+    #
+    # Manual stops remain stopped until explicitly started again.
+    restart: unless-stopped
+
+    # Give Uvicorn time to finish active requests and close database pools.
+    stop_grace_period: 30s
+
+    # Initialize a minimal PID 1 process for correct signal forwarding and
+    # zombie-process cleanup.
+    init: true
+
+    # =========================================================================
+    # ENVIRONMENT CONFIGURATION
+    # =========================================================================
+
+    # Load application settings and external database URLs from the local .env
+    # file.
+    #
+    # The .env file must not be committed to source control or copied into the
+    # Docker image.
+    env_file:
+      - .env
+
+    environment:
+      # Bind the application to all container network interfaces.
+      HOST: "0.0.0.0"
+
+      # Keep the internal container port fixed. The host mapping can be changed
+      # independently through APP_PORT.
+      PORT: "8000"
+
+      # Celery and worker processes are intentionally disabled.
+      #
+      # Keep this commented until Celery settings are restored in config.py.
+      # BACKGROUND_JOBS_ENABLED: "false"
+
+    # =========================================================================
+    # PORT MAPPING
+    # =========================================================================
+
+    ports:
+      # APP_PORT controls the host port.
+      #
+      # Examples:
+      #
+      # APP_PORT=8000  -> http://localhost:8000
+      # APP_PORT=8080  -> http://localhost:8080
+      #
+      # The default is 8000 when APP_PORT is absent.
+      - "${APP_PORT:-8000}:8000"
+
+    # =========================================================================
+    # STARTUP COMMAND
+    # =========================================================================
+
+    command:
+      - uvicorn
+      - app.main:app
+      - --host
+      - "0.0.0.0"
+      - --port
+      - "8000"
+      - --proxy-headers
+      - --no-server-header
+
+    # =========================================================================
+    # HEALTH CHECK
+    # =========================================================================
+
+    healthcheck:
+      # Use the FastAPI liveness endpoint.
+      #
+      # Change this path when the project exposes a different liveness route.
+      test:
+        - CMD
+        - curl
+        - --fail
+        - --silent
+        - --show-error
+        - http://127.0.0.1:8000/health/live
+
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+    # =========================================================================
+    # SECURITY
+    # =========================================================================
+
+    # Prevent the container from gaining additional Linux privileges.
+    security_opt:
+      - no-new-privileges:true
+
+    # Drop all Linux capabilities because the service does not require them.
+    cap_drop:
+      - ALL
+
+    # Use a temporary filesystem for standard temporary-file operations.
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+
+    # =========================================================================
+    # LOGGING
+    # =========================================================================
+
+    # Prevent Docker JSON log files from growing without limit.
+    logging:
+      driver: json-file
+
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+    # =========================================================================
+    # RESOURCE LIMITS
+    # =========================================================================
+
+    # These limits protect local and single-host deployments.
+    #
+    # Adjust them after measuring the application's real workload.
+    mem_limit: 1g
+    cpus: 1.0
+
+    # =========================================================================
+    # NETWORK
+    # =========================================================================
+
+    networks:
+      - application-network
+
+
+# =============================================================================
+# APPLICATION NETWORK
+# =============================================================================
+
+networks:
+  application-network:
+    # Private bridge network for this Compose project.
+    driver: bridge

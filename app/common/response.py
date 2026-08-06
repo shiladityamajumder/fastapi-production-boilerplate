@@ -1,390 +1,408 @@
-# File: app/common/response.py
 """
-===============================================================================
-UNIFIED API RESPONSE ENVELOPE
-===============================================================================
+File: app/common/response.py
 
-This module defines the single authoritative HTTP response contract.
+Canonical external API response envelope.
 
-It is the ONLY location in the system allowed to construct JSONResponse.
+All successful and failed JSON responses use one stable structure:
 
--------------------------------------------------------------------------------
-ARCHITECTURE BOUNDARY
--------------------------------------------------------------------------------
-
-Domain Layer:
-    - Returns domain objects / primitives
-    - Raises APIException on failure
-    - Does NOT construct HTTP responses
-
-Transport Layer:
-    - Converts domain results into APIResponse.success()
-    - Converts exceptions into APIResponse.error()
-
-This ensures:
-    - Zero framework leakage into business logic
-    - Stable external contract
-    - Centralized response evolution
-    - Cross-service consistency
-
--------------------------------------------------------------------------------
-NON-NEGOTIABLE RULE
--------------------------------------------------------------------------------
-
-Never construct JSONResponse manually outside this file.
-
-Violating this rule leads to:
-    - Inconsistent API shape
-    - Missing request_id
-    - Missing version metadata
-    - Broken observability
-    - Contract drift
-
--------------------------------------------------------------------------------
-RESPONSE SHAPE (STRICT CONTRACT)
--------------------------------------------------------------------------------
-
-{
-    "success": true | false,
-    "status": "success" | "error",
-    "code": 200,
-    "message": "...",
-    "data": {...} | null,
-    "meta": {
-        "request_id": "...",
-        "api_version": "v1",
-        "timestamp": "ISO8601 UTC",
-        "pagination": {...} | null,
-        "errors": [...] | null
+    {
+        "success": true,
+        "message": "Operation completed successfully",
+        "data": {},
+        "error": null,
+        "meta": {
+            "requestId": "...",
+            "correlationId": "...",
+            "apiVersion": "v1",
+            "timestamp": "..."
+        }
     }
-}
 
--------------------------------------------------------------------------------
-INVARIANTS
--------------------------------------------------------------------------------
+Python fields use snake_case while serialized API fields use camelCase.
 
-1. Every response contains "meta".
-2. request_id must be attached when available.
-3. Error responses must set data = null.
-4. Success responses must set errors = null.
-5. The HTTP status code must match body.code.
-6. Schema must remain backward compatible.
-
--------------------------------------------------------------------------------
-OBSERVABILITY GUARANTEE
--------------------------------------------------------------------------------
-
-- request_id enables distributed tracing.
-- X-Request-ID header mirrors meta.request_id.
-- Timestamp always UTC ISO8601.
-- API version comes from configuration.
+This module belongs to the API transport boundary. Domain services and
+repositories should return typed results or raise application exceptions rather
+than constructing HTTP responses directly.
 """
 
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Sequence
+from typing import Any
 
 from fastapi import status
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_validator,
+)
+from pydantic.alias_generators import to_camel
 
-from app.core.config import get_settings
-from app.core.request_context import get_request_id
-
-settings = get_settings()
-
-
-# =============================================================================
-# PAGINATION CONTRACT
-# =============================================================================
+from app.core.request_context import (
+    get_api_version,
+    get_correlation_id,
+    get_request_id,
+)
+from app.utils.datetime_utils import utc_now
 
 
-class Pagination(BaseModel):
+class APIModel(BaseModel):
     """
-    Offset-based pagination contract.
+    Base model for externally serialized API payloads.
 
-    ---------------------------------------------------------------------------
-    STANDARDIZATION RULE
-    ---------------------------------------------------------------------------
-
-    Teams must standardize on offset-based pagination.
-
-    Required fields:
-        - total_count
-        - limit
-        - offset
-        - has_next
-
-    Mixing page-based and offset-based pagination is prohibited.
-
-    ---------------------------------------------------------------------------
-    EXAMPLE USAGE
-    ---------------------------------------------------------------------------
-
-    # pagination = Pagination(
-    #     total_count=250,
-    #     limit=20,
-    #     offset=40,
-    #     has_next=True,
-    # )
-    #
-    # return APIResponse.success(
-    #     data=users,
-    #     pagination=pagination,
-    # )
+    Internal Python code uses snake_case. JSON responses use camelCase aliases.
+    Unknown fields are rejected to keep the public contract predictable.
     """
 
-    total_count: int
-    limit: int
-    offset: int
+    model_config = ConfigDict(
+        alias_generator=to_camel,
+        populate_by_name=True,
+        extra="forbid",
+    )
+
+
+class PaginationMeta(APIModel):
+    """
+    Offset-based pagination metadata.
+
+    Attributes:
+        total_count: Total number of matching records.
+        limit: Maximum number of records requested.
+        offset: Number of records skipped.
+        has_next: Whether another result page is available.
+    """
+
+    total_count: int = Field(ge=0)
+    limit: int = Field(ge=1)
+    offset: int = Field(ge=0)
     has_next: bool
 
 
-# =============================================================================
-# META SECTION
-# =============================================================================
-
-
-class Meta(BaseModel):
+class ErrorBody(APIModel):
     """
-    Metadata included in EVERY response.
+    Machine-readable and client-safe error information.
 
-    ---------------------------------------------------------------------------
-    PURPOSE
-    ---------------------------------------------------------------------------
-
-    Provides cross-cutting operational context.
-
-    Fields:
-
-    request_id:
-        Correlation ID injected by middleware.
-        Enables tracing across services.
-
-    api_version:
-        Controlled via configuration.
-        Allows versioning without route-based coupling.
-
-    timestamp:
-        UTC ISO8601.
-        Enables debugging and latency analysis.
-
-    pagination:
-        Present only for list responses.
-
-    errors:
-        Present only for error responses.
-
-    ---------------------------------------------------------------------------
-    EXTENSION RULE
-    ---------------------------------------------------------------------------
-
-    New metadata fields must:
-        - Be backward compatible
-        - Not break existing clients
-        - Be optional unless universally required
+    Attributes:
+        code: Stable application error identifier.
+        details: Optional structured error context.
     """
 
-    request_id: str | None
-    api_version: str = settings.API_V1_STR.replace("/", "") or "v1"
-    timestamp: str = Field(
-        default_factory=lambda: datetime.utcnow().isoformat() + "Z"
-    )
-    pagination: Pagination | None = None
-    errors: Sequence[dict[str, Any]] | None = None
+    code: str
+    details: Any | None = None
+
+    @field_validator("code")
+    @classmethod
+    def validate_code(
+        cls,
+        value: str,
+    ) -> str:
+        """
+        Normalize and reject a blank error code.
+
+        Args:
+            value: Raw error code.
+
+        Returns:
+            Normalized error code.
+
+        Raises:
+            ValueError: If the code is blank.
+        """
+
+        normalized = value.strip()
+
+        if not normalized:
+            raise ValueError(
+                "Error code must not be blank"
+            )
+
+        return normalized
 
 
-# =============================================================================
-# UNIFIED RESPONSE MODEL
-# =============================================================================
-
-
-class APIResponseModel(BaseModel):
+class ResponseMeta(APIModel):
     """
-    Canonical external response schema.
+    Operational metadata included in every JSON response.
 
-    This model defines the public API contract.
+    Attributes:
+        request_id: Identifier for the current HTTP request.
+        correlation_id: Identifier propagated across related services.
+        api_version: Public API version associated with the request.
+        timestamp: UTC response creation timestamp.
+        pagination: Optional pagination metadata for collection responses.
+    """
 
-    ---------------------------------------------------------------------------
-    FIELD SEMANTICS
-    ---------------------------------------------------------------------------
+    request_id: str | None = None
+    correlation_id: str | None = None
+    api_version: str
+    timestamp: datetime = Field(default_factory=utc_now)
+    pagination: PaginationMeta | None = None
 
-    success:
-        Boolean outcome indicator.
+    @field_validator("api_version")
+    @classmethod
+    def validate_api_version(
+        cls,
+        value: str,
+    ) -> str:
+        """
+        Normalize and reject a blank API version.
 
-    status:
-        Redundant but explicit string indicator ("success" | "error").
-        Useful for clients that avoid boolean logic.
+        Args:
+            value: API version obtained from request context.
 
-    code:
-        Mirrors HTTP status code.
+        Returns:
+            Normalized API version.
 
-    message:
-        Human-readable explanation.
+        Raises:
+            ValueError: If the version is blank.
+        """
 
-    data:
-        Present only for success responses.
+        normalized = value.strip().strip("/")
 
-    meta:
-        Operational metadata container.
+        if not normalized:
+            raise ValueError(
+                "API version must not be blank"
+            )
 
-    ---------------------------------------------------------------------------
-    STABILITY RULE
-    ---------------------------------------------------------------------------
+        return normalized
 
-    This schema must remain stable across versions unless explicitly versioned.
+
+class APIResponseModel[DataT](APIModel):
+    """
+    Stable response contract for successful and failed requests.
+
+    Type Parameters:
+        DataT: Type of the successful response payload.
     """
 
     success: bool
-    status: str
-    code: int
     message: str
-    data: Any | None
-    meta: Meta
+    data: DataT | None
+    error: ErrorBody | None
+    meta: ResponseMeta
 
+    @field_validator("message")
+    @classmethod
+    def validate_message(
+        cls,
+        value: str,
+    ) -> str:
+        """
+        Normalize and reject a blank response message.
 
-# =============================================================================
-# RESPONSE BUILDER (TRANSPORT ADAPTER)
-# =============================================================================
+        Args:
+            value: Response message.
+
+        Returns:
+            Normalized response message.
+
+        Raises:
+            ValueError: If the message is blank.
+        """
+
+        normalized = value.strip()
+
+        if not normalized:
+            raise ValueError(
+                "Response message must not be blank"
+            )
+
+        return normalized
 
 
 class APIResponse:
     """
-    The ONLY response builder in the system.
+    Build JSON responses using the canonical public API envelope.
 
-    ---------------------------------------------------------------------------
-    RESPONSIBILITY
-    ---------------------------------------------------------------------------
-
-    - Construct unified response schema
-    - Attach request_id header
-    - Serialize via jsonable_encoder
-    - Guarantee invariant compliance
-
-    ---------------------------------------------------------------------------
-    SUCCESS FLOW
-    ---------------------------------------------------------------------------
-
-    Controller Layer:
-
-    # result = service.create_user(payload)
-    # return APIResponse.success(
-    #     message="User created",
-    #     data=result,
-    #     code=201,
-    # )
-
-    ---------------------------------------------------------------------------
-    ERROR FLOW
-    ---------------------------------------------------------------------------
-
-    Exceptions are converted centrally by exception handlers:
-
-    # raise NotFoundError("User not found")
-
-    Handler:
-
-    # return APIResponse.error(
-    #     message="User not found",
-    #     code=404,
-    # )
-
-    ---------------------------------------------------------------------------
-    ANTI-PATTERN
-    ---------------------------------------------------------------------------
-
-    DO NOT:
-
-    # return JSONResponse({"foo": "bar"})
-
-    That breaks contract uniformity.
+    This class contains transport-level response construction only. Application
+    and domain layers must not depend on it.
     """
 
     @staticmethod
     def success(
         *,
-        message: str = "Operation completed successfully",
+        message: str = "Operation completed successfully.",
         data: Any = None,
-        code: int = status.HTTP_200_OK,
-        pagination: Pagination | None = None,
+        status_code: int = status.HTTP_200_OK,
+        pagination: PaginationMeta | None = None,
+        headers: dict[str, str] | None = None,
     ) -> JSONResponse:
         """
-        Construct a success response.
+        Create a successful JSON response.
 
-        CONTRACT:
-            - success=True
-            - status="success"
-            - errors=None
-            - HTTP status must equal body.code
+        Args:
+            message: Human-readable success message.
+            data: Successful response payload.
+            status_code: HTTP success or redirect status.
+            pagination: Optional pagination metadata.
+            headers: Optional additional HTTP headers.
+
+        Returns:
+            Serialized JSON response.
+
+        Raises:
+            ValueError: If the status code cannot contain this response body.
         """
 
-        meta = Meta(
-            request_id=get_request_id(),
-            pagination=pagination,
-        )
+        if status_code == status.HTTP_204_NO_CONTENT:
+            raise ValueError(
+                "Use an empty Response for HTTP 204"
+            )
 
-        body = APIResponseModel(
+        if not status.HTTP_200_OK <= status_code < 400:
+            raise ValueError(
+                "Success status_code must be between 200 and 399"
+            )
+
+        body = APIResponseModel[Any](
             success=True,
-            status="success",
-            code=code,
             message=message,
             data=data,
-            meta=meta,
+            error=None,
+            meta=APIResponse._build_meta(
+                pagination=pagination,
+            ),
         )
 
         response = JSONResponse(
-            status_code=code,
-            content=jsonable_encoder(body),
+            status_code=status_code,
+            content=jsonable_encoder(
+                body,
+                by_alias=True,
+                exclude_none=False,
+            ),
+            headers=headers,
         )
 
-        # Distributed tracing header
-        if meta.request_id:
-            response.headers["X-Request-ID"] = meta.request_id
+        APIResponse._attach_context_headers(response)
 
         return response
 
     @staticmethod
     def error(
         *,
+        error_code: str,
         message: str,
-        code: int = status.HTTP_500_INTERNAL_SERVER_ERROR,
-        errors: list[dict[str, Any]] | None = None,
+        status_code: int = (
+            status.HTTP_500_INTERNAL_SERVER_ERROR
+        ),
+        details: Any | None = None,
+        headers: dict[str, str] | None = None,
     ) -> JSONResponse:
         """
-        Construct an error response.
+        Create a standardized client-safe error response.
 
-        CONTRACT:
-            - success=False
-            - status="error"
-            - data=None
-            - errors attached in meta
-            - HTTP status must equal body.code
+        Args:
+            error_code: Stable machine-readable error identifier.
+            message: Human-readable client-safe explanation.
+            status_code: HTTP client or server error status.
+            details: Optional structured error details.
+            headers: Optional additional HTTP headers.
 
-        Used exclusively by exception handlers.
+        Returns:
+            Serialized JSON error response.
+
+        Raises:
+            ValueError: If the status code is outside the HTTP error range.
         """
 
-        meta = Meta(
-            request_id=get_request_id(),
-            errors=errors,
-        )
+        if not 400 <= status_code <= 599:
+            raise ValueError(
+                "Error status_code must be between 400 and 599"
+            )
 
-        body = APIResponseModel(
+        body = APIResponseModel[Any](
             success=False,
-            status="error",
-            code=code,
             message=message,
             data=None,
-            meta=meta,
+            error=ErrorBody(
+                code=error_code,
+                details=details,
+            ),
+            meta=APIResponse._build_meta(),
         )
 
         response = JSONResponse(
-            status_code=code,
-            content=jsonable_encoder(body),
+            status_code=status_code,
+            content=jsonable_encoder(
+                body,
+                by_alias=True,
+                exclude_none=False,
+            ),
+            headers=headers,
         )
 
-        if meta.request_id:
-            response.headers["X-Request-ID"] = meta.request_id
+        # Error responses should not be cached by browsers, gateways, or shared
+        # proxies unless an endpoint explicitly implements another policy.
+        response.headers.setdefault(
+            "Cache-Control",
+            "no-store",
+        )
+
+        APIResponse._attach_context_headers(response)
 
         return response
+
+    @staticmethod
+    def _build_meta(
+        *,
+        pagination: PaginationMeta | None = None,
+    ) -> ResponseMeta:
+        """
+        Build response metadata from the current execution context.
+
+        Args:
+            pagination: Optional pagination metadata.
+
+        Returns:
+            Response metadata populated from context variables.
+        """
+
+        return ResponseMeta(
+            request_id=get_request_id(),
+            correlation_id=get_correlation_id(),
+            api_version=get_api_version(),
+            pagination=pagination,
+        )
+
+    @staticmethod
+    def _attach_context_headers(
+        response: JSONResponse,
+    ) -> None:
+        """
+        Attach request and correlation identifiers to response headers.
+
+        The request-context middleware also performs this operation. Keeping it
+        here ensures responses constructed outside the normal middleware path,
+        including some tests and internal calls, remain consistent.
+
+        Args:
+            response: Response receiving context headers.
+        """
+
+        request_id = get_request_id()
+        correlation_id = get_correlation_id()
+
+        if request_id:
+            response.headers.setdefault(
+                "X-Request-ID",
+                request_id,
+            )
+
+        if correlation_id:
+            response.headers.setdefault(
+                "X-Correlation-ID",
+                correlation_id,
+            )
+
+
+__all__ = [
+    "APIModel",
+    "APIResponse",
+    "APIResponseModel",
+    "ErrorBody",
+    "PaginationMeta",
+    "ResponseMeta",
+]

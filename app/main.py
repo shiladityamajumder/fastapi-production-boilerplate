@@ -1,240 +1,131 @@
-# File: app/main.py
 """
-===============================================================================
-FASTAPI APPLICATION ENTRYPOINT (COMPOSITION ROOT)
-===============================================================================
+File: app/main.py
 
-This module is the **Composition Root** of the application.
+FastAPI application composition root.
 
-The Composition Root is the single location where all application
-components are assembled and wired together.
+This module creates the application, registers global middleware and exception
+handlers, attaches routers, and exposes the default ASGI application used by
+Uvicorn or another ASGI server.
 
-It connects infrastructure, middleware, routing, and lifecycle
-management into a fully operational FastAPI application.
-
--------------------------------------------------------------------------------
-RESPONSIBILITIES
--------------------------------------------------------------------------------
-
-This module is responsible for:
-
-    • loading application configuration
-    • creating the FastAPI instance
-    • registering middleware
-    • registering global exception handlers
-    • attaching routers
-    • connecting lifecycle management
-    • exposing operational system endpoints
-
--------------------------------------------------------------------------------
-ARCHITECTURAL BOUNDARY
--------------------------------------------------------------------------------
-
-This module MUST NOT contain:
-
-    ✘ business logic
-    ✘ database queries
-    ✘ repository usage
-    ✘ service orchestration
-    ✘ domain rules
-
-Those belong to the following layers:
-
-    Service Layer
-        app/modules/*/service.py
-
-    Repository Layer
-        app/modules/*/repository.py
-
-    Infrastructure Layer
-        app/infrastructure/
-
-The composition root only **assembles the system**.
-
--------------------------------------------------------------------------------
-APPLICATION BOOTSTRAP FLOW
--------------------------------------------------------------------------------
-
-create_app()
-    ↓
-Load configuration
-    ↓
-Create FastAPI instance
-    ↓
-Register middleware
-    ↓
-Register global exception handlers
-    ↓
-Register operational routers (health, system)
-    ↓
-Register versioned API routers
-    ↓
-Expose service root endpoint
-    ↓
-Return configured FastAPI instance
-
--------------------------------------------------------------------------------
-ROUTING STRUCTURE
--------------------------------------------------------------------------------
-
-Service descriptor:
-
-    /
-
-Operational endpoints:
-
-    /health/live
-    /health/ready
-    /health/deep
-
-Versioned API endpoints:
-
-    /api/v1/templates
-    /api/v1/products
-    /api/v1/...
-
--------------------------------------------------------------------------------
-PRODUCTION HARDENING
--------------------------------------------------------------------------------
-
-The application enforces several production safeguards:
-
-    • FastAPI debug mode is disabled
-    • Interactive docs disabled in production
-    • Centralized exception handling
-    • Infrastructure lifecycle managed via lifespan
-    • Versioned routing for backward compatibility
+Business logic and infrastructure implementation must not be placed here.
 """
+
+from __future__ import annotations
 
 from fastapi import FastAPI
-from fastapi.exceptions import RequestValidationError
-from starlette.exceptions import HTTPException as StarletteHTTPException
+from fastapi.responses import JSONResponse
 
-from app.api.v1.router import router as api_router
+from app.api.exception_handlers import register_exception_handlers
 from app.api.health import router as health_router
-
-from app.common.exceptions import (
-    APIException,
-    api_exception_handler,
-    validation_exception_handler,
-    http_exception_handler,
-    unhandled_exception_handler,
-)
-
+from app.api.v1.router import router as api_v1_router
 from app.common.response import APIResponse
-
-from app.core.config import Environment, get_settings
+from app.core.config import (
+    AppSettings,
+    Environment,
+    get_settings,
+)
 from app.core.lifespan import lifespan
+from app.core.logging import setup_logging
 from app.core.middleware import register_middleware
 
 
-# =============================================================================
-# APPLICATION FACTORY
-# =============================================================================
-
-
-def create_app() -> FastAPI:
+def create_app(
+    settings: AppSettings | None = None,
+) -> FastAPI:
     """
-    Application factory.
+    Build and configure an isolated FastAPI application instance.
 
-    Using an application factory provides several advantages:
+    Args:
+        settings: Optional validated settings override. Tests may provide an
+            explicit settings instance, while normal runtime execution uses
+            the cached environment-driven configuration.
 
-        • avoids module-level side effects
-        • allows isolated application instances for tests
-        • supports dynamic configuration injection
-        • improves maintainability in large systems
-
-    Returns
-    -------
-    FastAPI
-        Fully configured FastAPI application instance.
+    Returns:
+        Fully configured FastAPI application.
     """
 
-    settings = get_settings()
+    resolved_settings = settings or get_settings()
 
-    # Disable documentation in production
-    docs_enabled = settings.ENVIRONMENT != Environment.PRODUCTION
+    # Logging is configured before application startup so initialization
+    # failures are emitted through the same structured logging pipeline.
+    setup_logging(resolved_settings)
+
+    # Public API documentation is disabled in production by default. Internal
+    # teams can expose it through a separate protected environment if needed.
+    docs_enabled = (
+        resolved_settings.ENVIRONMENT
+        != Environment.PRODUCTION
+    )
 
     app = FastAPI(
-        title=settings.PROJECT_NAME,
-        version=settings.API_V1_STR,
-        debug=False,  # Debug must never be enabled in production
+        title=resolved_settings.PROJECT_NAME,
+        version=resolved_settings.APP_VERSION,
+        debug=resolved_settings.DEBUG,
         docs_url="/docs" if docs_enabled else None,
         redoc_url="/redoc" if docs_enabled else None,
         openapi_url="/openapi.json" if docs_enabled else None,
         lifespan=lifespan,
+        swagger_ui_parameters={
+            "persistAuthorization": False,
+        },
     )
 
-    # -------------------------------------------------------------------------
-    # Middleware Registration
-    # -------------------------------------------------------------------------
-    # Middleware ordering is controlled inside register_middleware().
-    register_middleware(app)
+    # Settings are stored once and reused by dependencies and lifecycle code.
+    app.state.settings = resolved_settings
 
-    # -------------------------------------------------------------------------
-    # Global Exception Handlers
-    # -------------------------------------------------------------------------
+    # The lifespan handler changes this to True only after all required
+    # infrastructure dependencies have passed their startup checks.
+    app.state.ready = False
 
-    app.add_exception_handler(APIException, api_exception_handler)
-
-    app.add_exception_handler(
-        RequestValidationError,
-        validation_exception_handler,
+    # Middleware must be registered before routes begin handling requests.
+    register_middleware(
+        app=app,
+        settings=resolved_settings,
     )
 
-    app.add_exception_handler(
-        StarletteHTTPException,
-        http_exception_handler,
-    )
+    register_exception_handlers(app)
 
-    app.add_exception_handler(
-        Exception,
-        unhandled_exception_handler,
-    )
-
-    # -------------------------------------------------------------------------
-    # Operational Routers
-    # -------------------------------------------------------------------------
-    # Infrastructure endpoints such as health checks.
-
+    # Health endpoints intentionally remain outside the versioned API prefix.
     app.include_router(health_router)
 
-    # -------------------------------------------------------------------------
-    # Versioned API Routers
-    # -------------------------------------------------------------------------
-    # All public APIs are versioned.
+    app.include_router(
+        api_v1_router,
+        prefix=resolved_settings.API_V1_STR,
+    )
 
-    app.include_router(api_router)
-
-    # -------------------------------------------------------------------------
-    # SERVICE ROOT ENDPOINT
-    # -------------------------------------------------------------------------
-
-    @app.get("/", tags=["System"])
-    async def root():
+    @app.get(
+        "/",
+        tags=["System"],
+        summary="Service descriptor",
+        include_in_schema=docs_enabled,
+    )
+    async def root() -> JSONResponse:
         """
-        Service root endpoint.
+        Return non-sensitive service discovery information.
 
-        Provides basic information about the running service and
-        useful operational endpoints.
+        The endpoint does not expose environment variables, enabled database
+        names, connection details, secrets, or infrastructure addresses.
         """
 
         return APIResponse.success(
-            message=settings.PROJECT_NAME,
+            message="Service information retrieved successfully",
             data={
-                "service": settings.PROJECT_NAME,
-                "version": settings.API_V1_STR,
-                "environment": settings.ENVIRONMENT.value,
-                "api_base": "/api/v1",
+                "service": resolved_settings.PROJECT_NAME,
+                "version": resolved_settings.APP_VERSION,
+                "apiBase": resolved_settings.API_V1_STR,
                 "documentation": (
                     "/docs"
-                    if settings.ENVIRONMENT != Environment.PRODUCTION
+                    if docs_enabled
                     else None
                 ),
-                "health_endpoints": {
-                    "live": "/health/live",
-                    "ready": "/health/ready",
-                    "deep": "/health/deep",
+                "health": {
+                    "liveness": "/health/live",
+                    "readiness": "/health/ready",
+                    "deep": (
+                        "/health/deep"
+                        if resolved_settings.DEEP_HEALTH_ENABLED
+                        else None
+                    ),
                 },
             },
         )
@@ -242,17 +133,16 @@ def create_app() -> FastAPI:
     return app
 
 
-# =============================================================================
-# APPLICATION INSTANCE
-# =============================================================================
-
-"""
-ASGI servers such as Uvicorn or Gunicorn import this variable
-as the application entrypoint.
-
-Example:
-
-    uvicorn app.main:app
-"""
-
+# Default ASGI application imported by Uvicorn:
+#
+#     uvicorn app.main:app
+#
+# Tests should normally call ``create_app(test_settings)`` instead of sharing
+# this process-level instance.
 app = create_app()
+
+
+__all__ = [
+    "app",
+    "create_app",
+]

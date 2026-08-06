@@ -1,109 +1,197 @@
-# File: app/core/middleware.py
 """
-===============================================================================
-APPLICATION MIDDLEWARE STACK (PRODUCTION-HARDENED)
-===============================================================================
+File: app/core/middleware.py
 
-Defines the complete HTTP middleware stack for the application.
+Pure-ASGI middleware for request context, security, request limits, CORS, and
+HTTP observability.
 
-Cross-cutting concerns implemented here:
+The service runs inside a controlled VPC, so this module intentionally contains:
 
-    • Request ID generation
-    • Request lifecycle logging
-    • Redis-backed rate limiting
-    • Response header enrichment
+- no application-level Host allow-list validation,
+- no rate-limiting middleware,
+- no rate-limit response headers.
 
--------------------------------------------------------------------------------
-ARCHITECTURAL ROLE
--------------------------------------------------------------------------------
-
-Middleware layer sits between:
-
-    Client
-        ↓
-    Middleware
-        ↓
-    Routes / Services
-
-Responsibilities:
-
-    - cross-cutting concerns
-    - observability
-    - infrastructure enforcement
-
-This layer MUST NOT:
-
-    - contain business logic
-    - mutate response bodies
-    - own infrastructure resources
-
-Infrastructure is accessed via:
-
-    request.app.state
-
--------------------------------------------------------------------------------
-EXECUTION ORDER (CRITICAL)
--------------------------------------------------------------------------------
-
-Outer → Inner:
-
-    1. RequestContextMiddleware
-    2. RequestLoggingMiddleware
-    3. RateLimitMiddleware
-    4. Route Handler
-
--------------------------------------------------------------------------------
-FAILURE POLICY
--------------------------------------------------------------------------------
-
-Redis failures → Fail OPEN
-
-Availability is prioritized over strict enforcement.
+Middleware is implemented directly against ASGI to avoid request-body buffering
+and the execution behavior associated with ``BaseHTTPMiddleware``.
 """
 
 from __future__ import annotations
 
+import hashlib
+import re
 import time
 import uuid
-from typing import Callable, Optional
 
-from fastapi import FastAPI, Request, Response
-from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
-from starlette.types import ASGIApp, Receive, Scope, Send
+from fastapi import FastAPI
+from starlette.datastructures import (
+    Headers,
+    MutableHeaders,
+)
+from starlette.middleware.cors import CORSMiddleware
+from starlette.types import (
+    ASGIApp,
+    Message,
+    Receive,
+    Scope,
+    Send,
+)
 
 from app.common.response import APIResponse
-from app.core.config import get_settings
+from app.core.config import AppSettings
 from app.core.logging import get_logger
-from app.core.rate_limit import RateLimitConfig
-from app.core.request_context import set_request_id, reset_request_id
+from app.core.request_context import (
+    reset_request_context,
+    set_request_context,
+)
 
 
-logger = get_logger("middleware")
+logger = get_logger(__name__)
 
 
-# =============================================================================
-# REQUEST CONTEXT MIDDLEWARE
-# =============================================================================
+_IDENTIFIER_PATTERN = re.compile(
+    r"^[A-Za-z0-9._:/-]{1,128}$"
+)
+
+_TRACEPARENT_PATTERN = re.compile(
+    r"^00-([0-9a-f]{32})-([0-9a-f]{16})-([0-9a-f]{2})$"
+)
+
+
+def _accepted_identifier(
+    value: str | None,
+) -> str | None:
+    """
+    Normalize and validate an incoming request identifier.
+
+    Args:
+        value: Raw header value.
+
+    Returns:
+        Validated identifier or ``None`` when the value is missing or invalid.
+    """
+
+    if value is None:
+        return None
+
+    normalized = value.strip()
+
+    if _IDENTIFIER_PATTERN.fullmatch(normalized):
+        return normalized
+
+    return None
+
+
+def _extract_trace_id(
+    traceparent: str | None,
+) -> str | None:
+    """
+    Extract a valid trace identifier from a W3C ``traceparent`` header.
+
+    Args:
+        traceparent: Raw ``traceparent`` header.
+
+    Returns:
+        A 32-character lowercase trace identifier or ``None``.
+    """
+
+    if not traceparent:
+        return None
+
+    match = _TRACEPARENT_PATTERN.fullmatch(
+        traceparent.strip().lower(),
+    )
+
+    if not match:
+        return None
+
+    trace_id = match.group(1)
+    parent_id = match.group(2)
+
+    if trace_id == "0" * 32 or parent_id == "0" * 16:
+        return None
+
+    return trace_id
+
+
+def _hash_client_ip(
+    scope: Scope,
+) -> str | None:
+    """
+    Return a privacy-reduced hash of the direct ASGI client address.
+
+    The raw address is never logged. Forwarded client headers are intentionally
+    ignored here because they must only be trusted through explicit gateway or
+    server configuration.
+
+    Args:
+        scope: Current ASGI request scope.
+
+    Returns:
+        Short hexadecimal hash or ``None``.
+    """
+
+    client = scope.get("client")
+
+    if not client:
+        return None
+
+    return hashlib.blake2b(
+        str(client[0]).encode("utf-8"),
+        digest_size=12,
+    ).hexdigest()
+
+
+def _resolved_route_template(
+    scope: Scope,
+) -> str:
+    """
+    Return the matched route template without logging raw URL parameters.
+
+    Route templates produce bounded-cardinality metrics such as
+    ``/products/{product_id}`` instead of recording every product identifier.
+    """
+
+    route = scope.get("route")
+    route_path = getattr(route, "path", None)
+
+    if isinstance(route_path, str) and route_path:
+        return route_path
+
+    return "unmatched"
 
 
 class RequestContextMiddleware:
     """
-    ASGI-level middleware responsible for request context propagation.
+    Bind request, correlation, trace, and API-version context.
 
-    Responsibilities:
-
-        - generate request_id
-        - propagate request_id via contextvars
-        - inject response headers safely
-
-    Why ASGI-level?
-
-        Header injection must happen during the ASGI
-        "http.response.start" event.
+    Valid incoming identifiers are propagated. Invalid identifiers are ignored
+    and replaced with generated values.
     """
 
-    def __init__(self, app: ASGIApp) -> None:
+    def __init__(
+        self,
+        app: ASGIApp,
+        *,
+        api_version: str,
+    ) -> None:
+        """
+        Initialize request-context middleware.
+
+        Args:
+            app: Downstream ASGI application.
+            api_version: Configured API prefix or version.
+        """
+
         self.app = app
+
+        normalized_version = api_version.strip().strip("/")
+
+        if "/" in normalized_version:
+            normalized_version = normalized_version.rsplit(
+                "/",
+                maxsplit=1,
+            )[-1]
+
+        self.api_version = normalized_version or "v1"
 
     async def __call__(
         self,
@@ -111,233 +199,537 @@ class RequestContextMiddleware:
         receive: Receive,
         send: Send,
     ) -> None:
+        """Bind context for one HTTP request."""
 
         if scope["type"] != "http":
-            await self.app(scope, receive, send)
+            await self.app(
+                scope,
+                receive,
+                send,
+            )
             return
 
-        settings = get_settings()
+        headers = Headers(scope=scope)
 
-        request = Request(scope)
+        request_id = (
+            _accepted_identifier(
+                headers.get("x-request-id"),
+            )
+            or str(uuid.uuid4())
+        )
 
-        request_id = request.headers.get("x-request-id") or str(uuid.uuid4())
+        correlation_id = (
+            _accepted_identifier(
+                headers.get("x-correlation-id"),
+            )
+            or request_id
+        )
 
-        token = set_request_id(request_id)
+        trace_id = _extract_trace_id(
+            headers.get("traceparent"),
+        )
 
-        async def send_wrapper(message):
+        tokens = set_request_context(
+            request_id=request_id,
+            correlation_id=correlation_id,
+            trace_id=trace_id,
+            api_version=self.api_version,
+        )
+
+        async def send_wrapper(
+            message: Message,
+        ) -> None:
+            """Attach correlation metadata to the response."""
 
             if message["type"] == "http.response.start":
-
-                headers = list(message.get("headers", []))
-
-                headers = [
-                    (k, v)
-                    for (k, v) in headers
-                    if k.lower() not in (b"x-request-id", b"x-api-version")
-                ]
-
-                headers.append(
-                    (b"x-request-id", request_id.encode("utf-8"))
+                response_headers = MutableHeaders(
+                    scope=message,
                 )
 
-                headers.append(
-                    (
-                        b"x-api-version",
-                        settings.API_V1_STR.encode("utf-8"),
-                    )
-                )
+                response_headers["X-Request-ID"] = request_id
+                response_headers[
+                    "X-Correlation-ID"
+                ] = correlation_id
 
-                message["headers"] = headers
+                response_headers[
+                    "X-API-Version"
+                ] = self.api_version
 
             await send(message)
 
         try:
-            await self.app(scope, receive, send_wrapper)
-
+            await self.app(
+                scope,
+                receive,
+                send_wrapper,
+            )
         finally:
-            reset_request_id(token)
+            reset_request_context(tokens)
 
 
-# =============================================================================
-# REQUEST LOGGING MIDDLEWARE
-# =============================================================================
-
-
-class RequestLoggingMiddleware(BaseHTTPMiddleware):
+class RequestLoggingMiddleware:
     """
-    Structured request lifecycle logging.
+    Emit one structured completion record for every HTTP request.
 
-    Logs:
-
-        - request start
-        - request completion
-        - execution duration
-        - unhandled exceptions
+    Query strings and request bodies are deliberately excluded to avoid logging
+    sensitive data and creating unbounded log cardinality.
     """
 
-    async def dispatch(
+    def __init__(
         self,
-        request: Request,
-        call_next: RequestResponseEndpoint,
-    ) -> Response:
+        app: ASGIApp,
+        *,
+        slow_threshold_ms: int,
+    ) -> None:
+        """
+        Initialize request logging.
 
-        start = time.perf_counter()
+        Args:
+            app: Downstream ASGI application.
+            slow_threshold_ms: Duration at which a request is logged as slow.
+        """
 
-        client_ip = request.client.host if request.client else None
+        self.app = app
+        self.slow_threshold_ms = slow_threshold_ms
 
-        logger.info(
-            "Incoming request",
-            extra={
-                "path": request.url.path,
-                "method": request.method,
-                "client_ip": client_ip,
-            },
-        )
+    async def __call__(
+        self,
+        scope: Scope,
+        receive: Receive,
+        send: Send,
+    ) -> None:
+        """Process and log one HTTP request."""
+
+        if scope["type"] != "http":
+            await self.app(
+                scope,
+                receive,
+                send,
+            )
+            return
+
+        started = time.perf_counter()
+
+        status_code = 500
+        escaped_exception = False
+
+        async def send_wrapper(
+            message: Message,
+        ) -> None:
+            """Capture the final HTTP status code."""
+
+            nonlocal status_code
+
+            if message["type"] == "http.response.start":
+                status_code = int(message["status"])
+
+            await send(message)
 
         try:
-            response = await call_next(request)
-
+            await self.app(
+                scope,
+                receive,
+                send_wrapper,
+            )
         except Exception:
-            logger.exception("Unhandled exception during request")
+            escaped_exception = True
             raise
+        finally:
+            duration_ms = round(
+                (
+                    time.perf_counter()
+                    - started
+                )
+                * 1_000,
+                2,
+            )
 
-        duration_ms = (time.perf_counter() - start) * 1000
+            log_context = {
+                "http_method": scope.get("method"),
+                "http_route": _resolved_route_template(scope),
+                "http_status_code": status_code,
+                "duration_ms": duration_ms,
+                "client_ip_hash": _hash_client_ip(scope),
+                "exception_escaped": escaped_exception,
+            }
 
-        logger.info(
-            "Request completed",
-            extra={
-                "status_code": response.status_code,
-                "duration_ms": round(duration_ms, 2),
+            if escaped_exception or status_code >= 500:
+                logger.error(
+                    "HTTP request failed",
+                    extra=log_context,
+                )
+            elif duration_ms >= self.slow_threshold_ms:
+                logger.warning(
+                    "Slow HTTP request completed",
+                    extra=log_context,
+                )
+            else:
+                logger.info(
+                    "HTTP request completed",
+                    extra=log_context,
+                )
+
+
+class RequestSizeLimitMiddleware:
+    """
+    Reject request bodies larger than the configured byte limit.
+
+    Both fixed-length and chunked request bodies are supported without buffering
+    the complete payload in memory.
+    """
+
+    def __init__(
+        self,
+        app: ASGIApp,
+        *,
+        max_body_bytes: int,
+    ) -> None:
+        """
+        Initialize request-size enforcement.
+
+        Args:
+            app: Downstream ASGI application.
+            max_body_bytes: Maximum accepted request-body size.
+        """
+
+        self.app = app
+        self.max_body_bytes = max_body_bytes
+
+    async def __call__(
+        self,
+        scope: Scope,
+        receive: Receive,
+        send: Send,
+    ) -> None:
+        """Enforce the request-body limit for one HTTP request."""
+
+        if scope["type"] != "http":
+            await self.app(
+                scope,
+                receive,
+                send,
+            )
+            return
+
+        content_length = Headers(
+            scope=scope,
+        ).get("content-length")
+
+        if content_length is not None:
+            declared_length = self._parse_content_length(
+                content_length
+            )
+
+            if declared_length is None:
+                await self._send_invalid_content_length(
+                    scope=scope,
+                    receive=receive,
+                    send=send,
+                )
+                return
+
+            if declared_length > self.max_body_bytes:
+                await self._send_too_large(
+                    scope=scope,
+                    receive=receive,
+                    send=send,
+                )
+                return
+
+        received_bytes = 0
+        response_started = False
+
+        async def limited_receive() -> Message:
+            """Track streamed body bytes without buffering the body."""
+
+            nonlocal received_bytes
+
+            message = await receive()
+
+            if message["type"] == "http.request":
+                received_bytes += len(
+                    message.get("body", b""),
+                )
+
+                if received_bytes > self.max_body_bytes:
+                    raise _RequestBodyTooLarge
+
+            return message
+
+        async def send_wrapper(
+            message: Message,
+        ) -> None:
+            """Track whether the downstream response has already started."""
+
+            nonlocal response_started
+
+            if message["type"] == "http.response.start":
+                response_started = True
+
+            await send(message)
+
+        try:
+            await self.app(
+                scope,
+                limited_receive,
+                send_wrapper,
+            )
+        except _RequestBodyTooLarge:
+            # A second response cannot be emitted after headers have already
+            # been sent. In that unusual case, propagate the exception so the
+            # server terminates the incomplete response safely.
+            if response_started:
+                raise
+
+            await self._send_too_large(
+                scope=scope,
+                receive=receive,
+                send=send,
+            )
+
+    @staticmethod
+    def _parse_content_length(
+        value: str,
+    ) -> int | None:
+        """Parse a non-negative Content-Length value."""
+
+        try:
+            parsed = int(value)
+        except ValueError:
+            return None
+
+        if parsed < 0:
+            return None
+
+        return parsed
+
+    async def _send_invalid_content_length(
+        self,
+        *,
+        scope: Scope,
+        receive: Receive,
+        send: Send,
+    ) -> None:
+        """Return a standardized invalid Content-Length response."""
+
+        response = APIResponse.error(
+            error_code="INVALID_CONTENT_LENGTH",
+            message="The Content-Length header is invalid.",
+            status_code=400,
+        )
+
+        await response(
+            scope,
+            receive,
+            send,
+        )
+
+    async def _send_too_large(
+        self,
+        *,
+        scope: Scope,
+        receive: Receive,
+        send: Send,
+    ) -> None:
+        """Return a standardized payload-too-large response."""
+
+        response = APIResponse.error(
+            error_code="PAYLOAD_TOO_LARGE",
+            message="The request body exceeds the allowed size.",
+            status_code=413,
+            details={
+                "maxBytes": self.max_body_bytes,
             },
         )
 
-        return response
-
-
-# =============================================================================
-# RATE LIMITING MIDDLEWARE
-# =============================================================================
-
-
-class RateLimitMiddleware(BaseHTTPMiddleware):
-    """
-    Redis-backed distributed rate limiter.
-
-    Features:
-
-        - shared Redis coordination
-        - per-endpoint configuration
-        - explicit opt-out support
-        - standards-compliant headers
-
-    Failure strategy:
-
-        Fail OPEN (allow request).
-    """
-
-    def _get_endpoint_config(
-        self,
-        request: Request,
-    ) -> Optional[RateLimitConfig]:
-
-        endpoint: Optional[Callable] = request.scope.get("endpoint")
-
-        if endpoint is None:
-            return None
-
-        if getattr(endpoint, "__no_rate_limit__", False):
-            return None
-
-        return getattr(endpoint, "__rate_limit__", None)
-
-    async def dispatch(
-        self,
-        request: Request,
-        call_next: RequestResponseEndpoint,
-    ) -> Response:
-
-        settings = get_settings()
-
-        if not settings.RATE_LIMIT_ENABLED:
-            return await call_next(request)
-
-        limiter = getattr(request.app.state, "rate_limiter", None)
-
-        if limiter is None:
-            return await call_next(request)
-
-        cfg = self._get_endpoint_config(request)
-
-        effective_cfg = cfg or limiter.default_config
-
-        try:
-
-            key = limiter.build_key(request)
-
-            allowed, remaining, reset_at = await limiter.check(
-                key=key,
-                config=effective_cfg,
-            )
-
-        except Exception:
-            logger.exception("Rate limiter internal error")
-            return await call_next(request)
-
-        if not allowed:
-
-            logger.warning(
-                "Rate limit exceeded",
-                extra={"rate_limit_key": key},
-            )
-
-            response = APIResponse.error(
-                message="Rate limit exceeded",
-                code=429,
-                errors=[
-                    {
-                        "field": None,
-                        "message": f"Retry after {reset_at}",
-                    }
-                ],
-            )
-
-            response.headers["X-RateLimit-Limit"] = str(
-                effective_cfg.limit
-            )
-
-            response.headers["X-RateLimit-Remaining"] = "0"
-
-            response.headers["X-RateLimit-Reset"] = str(reset_at)
-
-            response.headers["Retry-After"] = str(reset_at)
-
-            return response
-
-        response = await call_next(request)
-
-        response.headers["X-RateLimit-Limit"] = str(
-            effective_cfg.limit
+        await response(
+            scope,
+            receive,
+            send,
         )
 
-        response.headers["X-RateLimit-Remaining"] = str(remaining)
 
-        response.headers["X-RateLimit-Reset"] = str(reset_at)
-
-        return response
+class _RequestBodyTooLarge(Exception):
+    """Internal control-flow signal for streamed request-body overflow."""
 
 
-# =============================================================================
-# REGISTRATION
-# =============================================================================
-
-
-def register_middleware(app: FastAPI) -> None:
+class SecurityHeadersMiddleware:
     """
-    Register middleware in deterministic order.
-
-    Order MUST NOT be changed.
+    Add conservative security and cache-control headers to API responses.
     """
 
-    app.add_middleware(RequestContextMiddleware)
-    app.add_middleware(RequestLoggingMiddleware)
-    app.add_middleware(RateLimitMiddleware)
+    def __init__(
+        self,
+        app: ASGIApp,
+        *,
+        enabled: bool,
+        hsts_enabled: bool,
+    ) -> None:
+        """
+        Initialize security-header middleware.
+
+        Args:
+            app: Downstream ASGI application.
+            enabled: Whether standard security headers are added.
+            hsts_enabled: Whether HSTS is added.
+        """
+
+        self.app = app
+        self.enabled = enabled
+        self.hsts_enabled = hsts_enabled
+
+    async def __call__(
+        self,
+        scope: Scope,
+        receive: Receive,
+        send: Send,
+    ) -> None:
+        """Attach security headers to one HTTP response."""
+
+        if scope["type"] != "http" or not self.enabled:
+            await self.app(
+                scope,
+                receive,
+                send,
+            )
+            return
+
+        async def send_wrapper(
+            message: Message,
+        ) -> None:
+            """Add headers before the response starts."""
+
+            if message["type"] == "http.response.start":
+                headers = MutableHeaders(
+                    scope=message,
+                )
+
+                headers.setdefault(
+                    "Cache-Control",
+                    "no-store",
+                )
+
+                headers.setdefault(
+                    "X-Content-Type-Options",
+                    "nosniff",
+                )
+
+                headers.setdefault(
+                    "X-Frame-Options",
+                    "DENY",
+                )
+
+                headers.setdefault(
+                    "Referrer-Policy",
+                    "no-referrer",
+                )
+
+                headers.setdefault(
+                    "Permissions-Policy",
+                    "camera=(), microphone=(), geolocation=()",
+                )
+
+                if self.hsts_enabled:
+                    headers.setdefault(
+                        "Strict-Transport-Security",
+                        "max-age=31536000; includeSubDomains",
+                    )
+
+            await send(message)
+
+        await self.app(
+            scope,
+            receive,
+            send_wrapper,
+        )
+
+
+def register_middleware(
+    app: FastAPI,
+    settings: AppSettings,
+) -> None:
+    """
+    Register global application middleware.
+
+    Starlette applies the last added middleware as the outermost wrapper. The
+    registration order therefore ensures:
+
+    1. request context wraps every downstream component,
+    2. CORS can decorate application and middleware error responses,
+    3. request logging observes rejected and successful requests,
+    4. security headers are applied to standardized body-limit responses,
+    5. body-size validation occurs before route execution.
+
+    Args:
+        app: FastAPI application instance.
+        settings: Validated application settings.
+    """
+
+    # Innermost middleware: reject oversized bodies before route handlers read
+    # or deserialize the complete payload.
+    app.add_middleware(
+        RequestSizeLimitMiddleware,
+        max_body_bytes=settings.MAX_REQUEST_BODY_BYTES,
+    )
+
+    app.add_middleware(
+        SecurityHeadersMiddleware,
+        enabled=settings.SECURE_HEADERS_ENABLED,
+        hsts_enabled=settings.HSTS_ENABLED,
+    )
+
+    app.add_middleware(
+        RequestLoggingMiddleware,
+        slow_threshold_ms=(
+            settings.SLOW_REQUEST_THRESHOLD_MS
+        ),
+    )
+
+    if settings.CORS_ALLOWED_ORIGINS:
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=settings.CORS_ALLOWED_ORIGINS,
+            allow_credentials=(
+                settings.CORS_ALLOW_CREDENTIALS
+            ),
+            allow_methods=[
+                "GET",
+                "POST",
+                "PUT",
+                "PATCH",
+                "DELETE",
+                "OPTIONS",
+            ],
+            allow_headers=[
+                "Authorization",
+                "Content-Type",
+                "Idempotency-Key",
+                "Traceparent",
+                "X-Correlation-ID",
+                "X-Request-ID",
+                "X-User-ID",
+                "X-User-Role",
+            ],
+            expose_headers=[
+                "X-API-Version",
+                "X-Correlation-ID",
+                "X-Request-ID",
+            ],
+            max_age=600,
+        )
+
+    # Outermost middleware: all responses, including CORS preflight and
+    # middleware-generated errors, receive request and correlation identifiers.
+    app.add_middleware(
+        RequestContextMiddleware,
+        api_version=settings.API_V1_STR,
+    )
+
+
+__all__ = [
+    "RequestContextMiddleware",
+    "RequestLoggingMiddleware",
+    "RequestSizeLimitMiddleware",
+    "SecurityHeadersMiddleware",
+    "register_middleware",
+]

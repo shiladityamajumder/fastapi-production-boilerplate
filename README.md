@@ -1,896 +1,932 @@
-<!-- PROJECT TITLE -->
+<div align="center">
 
-<h1 align="center">
-🚀 Fast API Boilerplate Request Service
-</h1>
+# 🚀 FastAPI Microservice Foundation
 
-<p align="center">
-<b>Production-grade FastAPI backend built with Clean Architecture, modular services, and scalable infrastructure.</b>
+### Reusable • Async • Production-Oriented • Microservice-Ready
+
+<p>
+  <img src="https://img.shields.io/badge/Python-3.12%2B-3776AB?logo=python&logoColor=white" alt="Python 3.12+">
+  <img src="https://img.shields.io/badge/FastAPI-Async-009688?logo=fastapi&logoColor=white" alt="FastAPI">
+  <img src="https://img.shields.io/badge/SQLAlchemy-2.x-D71F00?logo=sqlalchemy&logoColor=white" alt="SQLAlchemy 2">
+  <img src="https://img.shields.io/badge/MySQL-Async-4479A1?logo=mysql&logoColor=white" alt="MySQL">
+  <img src="https://img.shields.io/badge/Docker-Ready-2496ED?logo=docker&logoColor=white" alt="Docker">
+  <img src="https://img.shields.io/badge/Tests-pytest-0A9EDC?logo=pytest&logoColor=white" alt="pytest">
 </p>
 
-<p align="center">
-Designed for high-performance APIs, modular development, and long-term maintainability.
+<p>
+A reusable FastAPI foundation for building consistent, scalable, maintainable,
+and production-oriented Python microservices.
 </p>
 
-<br>
-
-<!-- BADGES -->
-
-<p align="center">
-
-<img src="https://img.shields.io/badge/Python-3.11%2B-blue?style=for-the-badge&logo=python&logoColor=white" />
-<img src="https://img.shields.io/badge/FastAPI-0.110+-009688?style=for-the-badge&logo=fastapi&logoColor=white" />
-<img src="https://img.shields.io/badge/Architecture-Clean%20Architecture-purple?style=for-the-badge" />
-<img src="https://img.shields.io/badge/Async-Ready-success?style=for-the-badge" />
-<img src="https://img.shields.io/badge/License-Internal-lightgrey?style=for-the-badge" />
-
-</p>
-
-<br>
-
-<p align="center">
-
-⚡ **High-performance async backend**  
-🧩 **Modular feature architecture**  
-🛡 **Unified error & response contracts**  
-🔄 **Atomic transaction boundaries**  
-🚀 **Production-ready infrastructure**
-
-</p>
+</div>
 
 ---
 
-# 🧠 Overview
+## 📌 Overview
 
-This project is a **high-quality FastAPI backend service** built using a **clean, modular architecture** designed for:
+This repository provides a reusable FastAPI project structure designed for teams
+building multiple backend microservices.
 
-- scalability
-- maintainability
-- clear separation of concerns
-- infrastructure flexibility
+It includes a clean separation between:
 
-The architecture supports **multiple databases, Redis caching, background tasks, and modular domain services** while remaining lightweight for development.
+* HTTP routing,
+* application services,
+* repositories,
+* database adapters,
+* transaction management,
+* configuration,
+* logging,
+* middleware,
+* request context,
+* reusable API utilities,
+* tests,
+* Docker configuration,
+* optional background worker infrastructure.
 
-The system is designed to support:
+The project currently runs as a clean FastAPI service with asynchronous MySQL
+support.
 
-- microservice deployment
-- high-throughput APIs
-- large team development
-- long-term maintainability
-
----
-
-# 🧩 Architecture Philosophy
-
-The system follows a **layered architecture inspired by Clean Architecture and Hexagonal design**.
-
-Core principles:
-
-✔ Business logic isolated from infrastructure  
-✔ No framework leakage into domain logic  
-✔ Explicit transaction management  
-✔ Centralized response and error contracts  
-✔ Modular feature development  
+PostgreSQL, Microsoft SQL Server, MongoDB, Redis, and Celery remain available as
+disabled reference implementations and can be enabled later when required.
 
 ---
 
-# 🧭 System Architecture
+## 🎯 Primary Goals
 
+| Goal                    | Description                                                                            |
+| ----------------------- | -------------------------------------------------------------------------------------- |
+| **Reusable**            | Can be copied and adapted for multiple microservices.                                  |
+| **Compact**             | Avoids unnecessary abstraction and framework complexity.                               |
+| **Async-first**         | Uses asynchronous FastAPI, SQLAlchemy, sessions, and database access.                  |
+| **Explicit**            | Routing, dependencies, transactions, and infrastructure ownership remain visible.      |
+| **Maintainable**        | Each file and layer has a clear responsibility.                                        |
+| **Testable**            | Business, API, persistence, and contract behavior can be tested independently.         |
+| **Production-oriented** | Includes structured logging, health checks, Docker, validation, and graceful shutdown. |
+| **Extensible**          | Optional databases, Redis, and Celery can be enabled without redesigning the project.  |
+
+---
+
+## 🧱 Technology Stack
+
+### Active Runtime
+
+| Technology         | Purpose                                         |
+| ------------------ | ----------------------------------------------- |
+| Python 3.12+       | Application runtime                             |
+| FastAPI            | Asynchronous API framework                      |
+| Uvicorn            | ASGI server                                     |
+| Pydantic 2         | Request, response, and configuration validation |
+| Pydantic Settings  | Environment-based configuration                 |
+| SQLAlchemy 2       | ORM and database query layer                    |
+| asyncmy            | Asynchronous MySQL driver                       |
+| python-json-logger | Structured JSON logging                         |
+| Docker             | Containerized deployment                        |
+
+### Development and Testing
+
+| Tool           | Purpose                         |
+| -------------- | ------------------------------- |
+| pytest         | Test framework                  |
+| pytest-asyncio | Async test support              |
+| HTTPX          | API and ASGI testing            |
+| pytest-cov     | Test coverage                   |
+| Ruff           | Formatting and linting          |
+| mypy           | Static type checking            |
+| pip-audit      | Dependency vulnerability checks |
+| pre-commit     | Automated local quality checks  |
+
+### Disabled Optional Integrations
+
+The following integrations are intentionally disabled:
+
+* PostgreSQL
+* Microsoft SQL Server
+* MongoDB
+* Redis
+* Celery Worker
+* Celery Beat
+
+They should be enabled only after their configuration, dependencies, registry
+integration, health checks, and tests are activated.
+
+---
+
+## 🏗️ Architecture
+
+The project follows a pragmatic layered architecture.
+
+```mermaid
+flowchart LR
+    Client[Client / API Gateway]
+    Router[FastAPI Router]
+    Service[Application Service]
+    Repository[Repository]
+    UOW[Unit of Work]
+    Database[(External MySQL)]
+
+    Client --> Router
+    Router --> Service
+    Service --> Repository
+    Service --> UOW
+    Repository --> UOW
+    UOW --> Database
 ```
+
+The main application flow is:
+
+```text
 HTTP Request
-     │
-     ▼
-Middleware Stack
-     │
-     ▼
-API Routes
-     │
-     ▼
-Dependencies
-     │
-     ▼
-Service Layer
-     │
-     ▼
-Unit Of Work
-     │
-     ▼
-Repository Layer
-     │
-     ▼
-Infrastructure Adapters
-     │
-     ▼
-Database / Cache
+    ↓
+Middleware and Request Context
+    ↓
+API Router
+    ↓
+Dependency Injection
+    ↓
+Application Service
+    ↓
+Repository
+    ↓
+Unit of Work
+    ↓
+External Database
+    ↓
+Standard API Response
+```
+
+### Architectural Rule
+
+```text
+Router → Service → Repository → Database
+```
+
+Each layer has a clear responsibility.
+
+| Layer            | Responsibility                                     |
+| ---------------- | -------------------------------------------------- |
+| Router           | HTTP transport and request parsing                 |
+| Service          | Business logic and workflow orchestration          |
+| Repository       | Persistence operations and queries                 |
+| Unit of Work     | Transaction and session ownership                  |
+| Database Adapter | Engine, pool, connection, and lifecycle management |
+| Common/Core      | Shared cross-cutting functionality                 |
+
+Detailed architecture is available in:
+
+```text
+ARCHITECTURE.md
 ```
 
 ---
 
-# 📦 Project Structure
+## 📁 Project Structure
 
-```
-fastapi-production-boilerplate
-│
-├── app
-│   │
-│   ├── main.py                  # FastAPI application entrypoint
-│   │
-│   ├── api                      # API layer
-│   │   ├── dependencies         # FastAPI dependency providers
-│   │   └── v1                   # Versioned API routers
-│   │
-│   ├── core                     # Application core
-│   │   ├── config.py            # Environment configuration
-│   │   ├── lifespan.py          # Application startup / shutdown
-│   │   ├── middleware.py        # HTTP middleware stack
-│   │   ├── logging.py           # Logging infrastructure
-│   │   ├── rate_limit.py        # Redis rate limiter
-│   │   ├── execution.py         # Service execution wrapper
-│   │   ├── idempotency.py       # Distributed idempotency
-│   │   └── request_context.py   # Request context handling
-│   │
-│   ├── common                   # Shared API utilities
-│   │   ├── exceptions.py        # Domain error model
-│   │   └── response.py          # Unified API response schema
-│   │
-│   ├── db                       # Database layer
-│   │   ├── base.py              # SQLAlchemy declarative base
-│   │   ├── registry.py          # Database registry
-│   │   └── unit_of_work.py      # Transaction boundary
-│   │
-│   ├── infrastructure           # Infrastructure adapters
-│   │   ├── postgres.py
+```text
+fastapi_project_structure/
+├── app/
+│   ├── api/
+│   │   ├── v1/
+│   │   ├── dependencies.py
+│   │   ├── exception_handlers.py
+│   │   ├── health.py
+│   │   └── router.py
+│   ├── common/
+│   │   ├── exceptions.py
+│   │   ├── execution.py
+│   │   ├── filters.py
+│   │   ├── pagination.py
+│   │   ├── response.py
+│   │   └── sorting.py
+│   ├── core/
+│   │   ├── config.py
+│   │   ├── constants.py
+│   │   ├── lifespan.py
+│   │   ├── logging.py
+│   │   ├── middleware.py
+│   │   └── request_context.py
+│   ├── db/
+│   │   ├── base.py
 │   │   ├── mysql.py
+│   │   ├── postgres.py
 │   │   ├── mssql.py
 │   │   ├── mongo.py
-│   │   └── redis_client.py
-│   │
-│   ├── modules                  # Feature modules
-│   │   ├── product
-│   │   └── templates
-│   │
-│   ├── tasks                    # Background jobs (Celery etc)
-│   │
-│   └── utils                    # Shared utility helpers
-│
-├── docker                       # Container configuration
-│
-├── logs                         # Application logs
-│
-├── .env                         # Local environment configuration
-├── .env.example                 # Example environment variables
-├── requirements.txt             # Python dependencies
-└── README.md
+│   │   ├── redis_client.py
+│   │   ├── registry.py
+│   │   ├── sqlalchemy_types.py
+│   │   └── uow.py
+│   ├── modules/
+│   │   └── example/
+│   ├── utils/
+│   ├── worker/
+│   └── main.py
+├── cicd/
+├── docs/
+├── scripts/
+├── tests/
+├── .dockerignore
+├── .env.example
+├── .gitignore
+├── Dockerfile
+├── docker-compose.yml
+├── pyproject.toml
+├── requirements.txt
+├── requirements-dev.txt
+├── README.md
+├── ARCHITECTURE.md
+├── STRUCTURE.md
+├── DEVELOPMENT.md
+└── TESTING.md
+```
+
+A complete file-by-file explanation is available in:
+
+```text
+STRUCTURE.md
 ```
 
 ---
 
-# 🧱 Module Architecture
+## 🔤 Naming Conventions
 
-Each feature module follows a **consistent internal structure**.
+The project follows consistent naming rules across API, Python, database, and
+event boundaries.
 
-Example module layout:
+| Boundary              | Convention              | Example                |
+| --------------------- | ----------------------- | ---------------------- |
+| API request fields    | camelCase               | `productId`            |
+| API response fields   | camelCase               | `createdAt`            |
+| Query parameters      | camelCase               | `pageSize`             |
+| Event payload fields  | camelCase               | `orderId`              |
+| URL paths             | kebab-case              | `/product-locations`   |
+| Python variables      | snake_case              | `product_id`           |
+| Python functions      | snake_case              | `create_product`       |
+| Classes               | PascalCase              | `ProductService`       |
+| Pydantic schemas      | PascalCase              | `CreateProductRequest` |
+| Database tables       | snake_case              | `product_locations`    |
+| Database columns      | snake_case              | `created_at`           |
+| Constants             | UPPER_SNAKE_CASE        | `DEFAULT_PAGE_SIZE`    |
+| Environment variables | UPPER_SNAKE_CASE        | `MYSQL_URL`            |
+| Event names           | dot-separated lowercase | `product.created`      |
 
-```
-modules/product
-│
-├── constants.py
-├── dependencies.py
-├── models.py
-├── repository.py
-├── schemas.py
-├── service.py
-├── routes.py
-├── openapi.py
-└── utils.py
-```
-
-This design guarantees **predictable development patterns** and allows developers to onboard quickly.
-
----
-
-# 🔄 Request Flow
-
-Example API request lifecycle:
-
-```
-Client Request
-     │
-     ▼
-FastAPI Router
-     │
-     ▼
-Dependency Injection
-     │
-     ▼
-Service Layer
-     │
-     ▼
-UnitOfWork Transaction
-     │
-     ▼
-Repository
-     │
-     ▼
-Database Adapter
-     │
-     ▼
-Database
-```
+Pydantic aliases should convert external camelCase fields into internal
+snake_case Python attributes.
 
 ---
 
-# ⚙️ Technology Stack
+## ⚙️ Configuration
 
-| Layer | Technology |
-|------|-------------|
-| Framework | FastAPI |
-| Runtime | Python 3.11+ |
-| Validation | Pydantic v2 |
-| ORM | SQLAlchemy 2.0 |
-| Async DB | asyncpg |
-| Cache | Redis |
-| Background Jobs | Celery (optional) |
-| Containerization | Docker |
+Application configuration is managed through:
+
+```text
+app/core/config.py
+```
+
+Local values are loaded from:
+
+```text
+.env
+```
+
+Production values should be injected through the deployment platform.
+
+### Example
+
+```dotenv
+# =============================================================================
+# APPLICATION
+# =============================================================================
+
+ENVIRONMENT=development
+PROJECT_NAME=fastapi_service
+APP_VERSION=1.0.0
+DEBUG=true
+
+HOST=0.0.0.0
+PORT=8000
+TIMEZONE=Asia/Kolkata
+
+
+# =============================================================================
+# MYSQL
+# =============================================================================
+
+ENABLE_MYSQL=true
+MYSQL_URL=mysql+asyncmy://username:password@hostname:3306/database_name
+```
+
+Never commit the real `.env` file.
+
+Use `.env.example` to document supported values without including secrets.
 
 ---
 
-# 🛠 Local Development
+## 🚀 Local Setup
 
-## 1️⃣ Clone Repository
+### 1. Clone the repository
 
 ```bash
-git clone github.com/shiladityamajumder/fastapi-production-boilerplate.git
-cd fastapi-production-boilerplate
+git clone <repository-url>
+cd fastapi_project_structure
 ```
 
----
-
-## 2️⃣ Create Virtual Environment
+### 2. Create a virtual environment
 
 ```bash
-python -m venv venv
+python -m venv .venv
 ```
 
-Activate environment.
+Activate on Windows PowerShell:
 
-**Windows**
+```powershell
+.venv\Scripts\Activate.ps1
+```
+
+Activate on Windows Command Prompt:
+
+```cmd
+.venv\Scripts\activate.bat
+```
+
+Activate on Linux or macOS:
 
 ```bash
-venv\Scripts\activate
+source .venv/bin/activate
 ```
 
-**Linux / macOS**
+### 3. Upgrade packaging tools
 
 ```bash
-source venv/bin/activate
+python -m pip install --upgrade pip setuptools wheel
 ```
 
----
-
-## 3️⃣ Install Dependencies
+### 4. Install development dependencies
 
 ```bash
-pip install -r requirements.txt
+python -m pip install -r requirements-dev.txt
 ```
 
----
+Alternative installation through `pyproject.toml`:
 
-## 4️⃣ Configure Environment
+```bash
+python -m pip install -e ".[dev]"
+```
 
-Create `.env` file from template.
+### 5. Create the environment file
+
+Linux or macOS:
 
 ```bash
 cp .env.example .env
 ```
 
-For development without infrastructure:
+Windows PowerShell:
 
-```env
-ENABLE_POSTGRES=false
-ENABLE_MYSQL=false
-ENABLE_MSSQL=false
-ENABLE_MONGO=false
-ENABLE_REDIS=false
+```powershell
+Copy-Item .env.example .env
 ```
 
----
-
-# ▶ Running the Application
-
-Start the server from project root:
+### 6. Start the application
 
 ```bash
-python -m uvicorn app.main:app --host 0.0.0.0 --port 8888
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-Application will start at:
+The service will be available at:
 
-```
-http://localhost:8888
-```
-
----
-
-# 📡 API Documentation
-
-Interactive API documentation is available at:
-
-```
-/docs
-```
-
-Example:
-
-```
-http://localhost:8888/docs
-```
-
-Documentation is **automatically disabled in production environments**.
-
----
-
-# 🧪 Health Endpoints
-
-### Liveness Probe
-
-```
-GET /health/live
-```
-
-Example response:
-
-```json
-{
-  "success": true,
-  "status": "success",
-  "code": 200,
-  "message": "Operation completed successfully",
-  "data": {
-    "status": "alive"
-  }
-}
+```text
+http://localhost:8000
 ```
 
 ---
 
-### Readiness Probe
+## 📖 API Documentation
 
-```
-GET /health/ready
-```
+FastAPI automatically exposes interactive API documentation.
 
-Used by:
+| Interface    | URL                                  |
+| ------------ | ------------------------------------ |
+| Swagger UI   | `http://localhost:8000/docs`         |
+| ReDoc        | `http://localhost:8000/redoc`        |
+| OpenAPI JSON | `http://localhost:8000/openapi.json` |
 
-- Kubernetes readiness checks
-- load balancer health verification
-
----
-
-# 🔌 Infrastructure Configuration
-
-External services are **feature-flag controlled**.
-
-### PostgreSQL
-
-```env
-ENABLE_POSTGRES=true
-
-POSTGRES_ASYNC_URL=postgresql+asyncpg://user:password@localhost:5432/db
-POSTGRES_SYNC_URL=postgresql://user:password@localhost:5432/db
-```
+Documentation availability may be disabled or restricted in production through
+application configuration.
 
 ---
 
-### MongoDB
+## ❤️ Health Endpoints
 
-```env
-ENABLE_MONGO=true
+Recommended health routes:
 
-MONGO_URI=mongodb://localhost:27017
-MONGO_DB_NAME=fastapi-production-boilerplate
-```
+| Endpoint            | Purpose                                              |
+| ------------------- | ---------------------------------------------------- |
+| `GET /health`       | General service health summary                       |
+| `GET /health/live`  | Process liveness                                     |
+| `GET /health/ready` | Application readiness and required dependency checks |
 
----
+### Liveness
 
-### Redis
+Liveness confirms that the FastAPI process can respond.
 
-```env
-ENABLE_REDIS=true
+It should not fail only because an external database is temporarily unavailable.
 
-REDIS_URL=redis://localhost:6379/0
-RATE_LIMIT_ENABLED=true
-```
+### Readiness
 
-If an enabled service fails connectivity validation, **application startup aborts** to avoid running in a degraded state.
+Readiness confirms that the service is prepared to receive traffic.
 
----
+It may validate:
 
-# 🔐 Unified Response Contract
-
-Every API response follows a **single unified schema**.
-
-Example:
-
-```json
-{
-  "success": true,
-  "status": "success",
-  "code": 200,
-  "message": "...",
-  "data": {},
-  "meta": {
-    "request_id": "...",
-    "api_version": "v1",
-    "timestamp": "2026-01-01T10:00:00Z",
-    "errors": null
-  }
-}
-```
-
-Benefits:
-
-- predictable client integration
-- centralized response formatting
-- built-in observability
+* application initialization,
+* required configuration,
+* MySQL connectivity,
+* mandatory infrastructure state.
 
 ---
 
-# 🚦 Error Handling
+## 🐳 Docker
 
-Domain services raise structured exceptions.
+The Docker configuration starts only the FastAPI service.
 
-Supported domain errors:
+It does not start:
 
-| Exception | HTTP Status |
-|-----------|-------------|
-| NotFoundError | 404 |
-| ConflictError | 409 |
-| UnauthorizedError | 401 |
-| ForbiddenError | 403 |
+* MySQL,
+* PostgreSQL,
+* MSSQL,
+* MongoDB,
+* Redis,
+* Celery Worker,
+* Celery Beat.
 
-All errors are automatically converted to the unified API response format.
+All databases and infrastructure are expected to be external and configured
+through environment variables.
 
----
-
-# 🧾 Logging System
-
-Logging includes:
-
-- structured JSON logs in production
-- readable logs in development
-- request correlation IDs
-- non-blocking logging pipeline
-
-Log file location:
-
-```
-logs/app.log
-```
-
----
-
-# 🧱 Database Transaction Model
-
-Transactions are managed using the **Unit Of Work pattern**.
-
-Example:
-
-```python
-async with UnitOfWork(session):
-    repository.create(...)
-```
-
-Guarantees:
-
-- atomic operations
-- deterministic commit behavior
-- automatic rollback on error
-
----
-
-# 🐳 Docker (Optional)
-
-Container configuration is located in:
-
-```
-docker/
-```
-
-Run application using Docker:
+### Build and start
 
 ```bash
 docker compose up --build
 ```
 
----
+### Start in the background
 
-# 📈 Future Extensions
+```bash
+docker compose up --build -d
+```
 
-The architecture is ready for:
+### View logs
 
-- distributed microservices
-- event-driven messaging
-- background workers
-- distributed tracing
-- service mesh deployments
+```bash
+docker compose logs -f api
+```
 
----
+### Stop
 
-# 🤝 Development Guidelines
+```bash
+docker compose down
+```
 
-✔ Keep routes thin  
-✔ Put business logic inside services  
-✔ Repositories only handle persistence  
-✔ Never construct JSONResponse manually  
+### Rebuild without cache
 
-Always return responses using:
-
-```python
-APIResponse.success(...)
-APIResponse.error(...)
+```bash
+docker compose build --no-cache
 ```
 
 ---
 
-# 📜 License
+## 🗄️ Database Architecture
 
-This project is licensed under the MIT License.
+MySQL is the currently active database.
+
+Expected SQLAlchemy URL:
+
+```text
+mysql+asyncmy://username:password@hostname:3306/database_name
+```
+
+### Database Ownership Rules
+
+The application service should map and consume existing database tables.
+
+It should not manage shared database migrations when a dedicated migration
+repository owns the schema.
+
+Do not use:
+
+```text
+metadata.create_all()
+automatic ORM synchronization
+service startup migrations
+local Alembic revisions for shared tables
+```
+
+Recommended platform ownership:
+
+```text
+Dedicated migration repository
+    ↓
+Owns schema definitions and migrations
+
+Application microservices
+    ↓
+Map and consume the existing schema
+```
 
 ---
 
-# Built With
+## 🔄 Transaction Management
 
-FastAPI + Clean Architecture principles
+The project uses the Unit of Work pattern.
 
-Designed for scalable backend systems.
+```mermaid
+stateDiagram-v2
+    [*] --> TransactionOpened
+    TransactionOpened --> Commit: success
+    TransactionOpened --> Rollback: exception
+    Commit --> SessionClosed
+    Rollback --> SessionClosed
+    SessionClosed --> [*]
+```
+
+Rules:
+
+* one session per business use case,
+* one Unit of Work per transaction,
+* repositories reuse the same transaction session,
+* successful workflows commit,
+* failed workflows roll back,
+* sessions always close,
+* sessions are never stored globally.
 
 ---
 
-# 🧪 Testing Strategy
+## 📦 API Response Format
 
-The service is designed to support both **unit tests** and **integration tests**.
+Successful response:
 
-Testing layers include:
+```json
+{
+  "success": true,
+  "message": "Products retrieved successfully",
+  "data": [],
+  "meta": {
+    "page": 1,
+    "pageSize": 20,
+    "totalItems": 0,
+    "totalPages": 0,
+    "hasNext": false,
+    "hasPrevious": false
+  }
+}
+```
 
-- service-level unit tests
-- repository database tests
-- API endpoint integration tests
+Error response:
 
-Recommended testing stack:
+```json
+{
+  "success": false,
+  "message": "Requested resource was not found",
+  "data": null,
+  "error": {
+    "code": "RESOURCE_NOT_FOUND",
+    "details": null
+  }
+}
+```
 
-| Tool | Purpose |
-|-----|--------|
-| pytest | test runner |
-| pytest-asyncio | async test support |
-| httpx | async API client |
-| factory-boy | test data generation |
+Raw database exceptions, credentials, internal stack traces, and sensitive
+configuration must never be returned to clients.
 
-Example test execution:
+---
+
+## 🧩 Adding a New Business Module
+
+Create a new module using this structure:
+
+```text
+app/modules/product/
+├── __init__.py
+├── dependencies.py
+├── models.py
+├── openapi.py
+├── repository.py
+├── router.py
+├── schemas.py
+└── service.py
+```
+
+Recommended implementation order:
+
+1. map the existing database tables,
+2. create request and response schemas,
+3. implement repository queries,
+4. implement application service workflows,
+5. expose dependency providers,
+6. create API routes,
+7. define OpenAPI metadata,
+8. register the module router,
+9. add unit tests,
+10. add API and integration tests.
+
+### Module Responsibilities
+
+| File              | Responsibility                              |
+| ----------------- | ------------------------------------------- |
+| `models.py`       | SQLAlchemy ORM mappings                     |
+| `schemas.py`      | Pydantic request and response schemas       |
+| `repository.py`   | Database queries and persistence logic      |
+| `service.py`      | Business rules and workflow orchestration   |
+| `dependencies.py` | Repository and service dependency providers |
+| `router.py`       | FastAPI endpoints                           |
+| `openapi.py`      | OpenAPI metadata and examples               |
+
+---
+
+## 🧪 Testing
+
+Run the complete test suite:
 
 ```bash
 pytest
 ```
 
-Example structure:
-
-```
-tests/
-│
-├── unit
-│   ├── services
-│   └── utils
-│
-├── integration
-│   ├── api
-│   └── repositories
-│
-└── conftest.py
-```
-
----
-
-# 🧰 Development Tooling
-
-Recommended development tools:
-
-| Tool | Purpose |
-|-----|---------|
-| Black | code formatting |
-| Ruff | linting |
-| MyPy | static typing |
-| Pre-commit | automated code quality |
-
-Example installation:
+Run only unit tests:
 
 ```bash
-pip install black ruff mypy pre-commit
+pytest tests/unit
 ```
 
-Example pre-commit setup:
+Run API tests:
 
 ```bash
-pre-commit install
+pytest tests/api
 ```
 
-This ensures all commits pass linting and formatting checks.
+Run integration tests:
 
----
-
-# 🧭 Configuration Management
-
-Application configuration is managed through **environment variables**.
-
-Configuration is loaded using **Pydantic Settings**, ensuring:
-
-- deterministic startup
-- strict validation
-- typed configuration access
-
-Configuration source priority:
-
-```
-Environment Variables
-      ↓
-.env file
-      ↓
-Default values in AppSettings
+```bash
+pytest tests/integration
 ```
 
-All configuration variables are documented in:
+Run contract tests:
 
-```
-.env.example
-```
-
----
-
-# 🧱 Database Strategy
-
-The architecture supports **multiple database backends simultaneously**.
-
-Supported engines:
-
-| Database | Purpose |
-|---------|--------|
-| PostgreSQL | primary relational database |
-| MySQL | legacy integration support |
-| MSSQL | enterprise system integration |
-| MongoDB | document storage |
-| Redis | caching and rate limiting |
-
-Database access is abstracted through:
-
-```
-Repository Layer
-     ↓
-Unit Of Work
-     ↓
-Database Adapter
+```bash
+pytest tests/contract
 ```
 
-This allows **easy infrastructure replacement without affecting business logic**.
+Run end-to-end tests:
 
----
-
-# ⚡ Performance Considerations
-
-The system is optimized for **high-throughput APIs**.
-
-Performance strategies include:
-
-- asynchronous database access
-- connection pooling
-- non-blocking logging
-- centralized middleware
-- rate limiting support
-- idempotent request handling
-
-Typical request latency (local development):
-
+```bash
+pytest tests/e2e
 ```
-~2ms - 8ms per request
+
+Run a specific test file:
+
+```bash
+pytest tests/api/test_health.py
+```
+
+Generate coverage:
+
+```bash
+pytest --cov=app --cov-report=term-missing
+```
+
+Generate HTML coverage:
+
+```bash
+pytest --cov=app --cov-report=html
+```
+
+The detailed testing strategy is documented in:
+
+```text
+TESTING.md
 ```
 
 ---
 
-# 🔍 Observability
+## ✅ Code Quality
 
-The system includes built-in observability mechanisms.
+### Format
 
-Features include:
-
-- request correlation IDs
-- structured logging
-- health probes
-- centralized error reporting
-
-These features enable easy integration with:
-
-- ELK stack
-- Datadog
-- Prometheus
-- Grafana
-
----
-
-# 🛡 Security Considerations
-
-The architecture includes several security-oriented design choices:
-
-- centralized error handling
-- strict configuration validation
-- idempotent request support
-- request rate limiting
-- infrastructure validation during startup
-
-Future extensions may include:
-
-- OAuth2 authentication
-- JWT authorization
-- audit logging
-- API key management
-
----
-
-# 🔄 Deployment Model
-
-The service is designed to support multiple deployment strategies.
-
-Supported environments:
-
-| Environment | Purpose |
-|------------|--------|
-| Local development | developer machines |
-| Containerized | Docker deployments |
-| Cloud native | Kubernetes clusters |
-
-Typical deployment pipeline:
-
+```bash
+ruff format .
 ```
-Git Commit
-     ↓
-CI Pipeline
-     ↓
-Build Docker Image
-     ↓
-Push to Registry
-     ↓
-Deploy to Environment
+
+### Lint
+
+```bash
+ruff check .
+```
+
+### Automatically fix safe issues
+
+```bash
+ruff check . --fix
+```
+
+### Type checking
+
+```bash
+mypy app
+```
+
+### Dependency security audit
+
+```bash
+pip-audit
+```
+
+### Recommended local validation
+
+```bash
+ruff format .
+ruff check .
+mypy app
+pytest
 ```
 
 ---
 
-# 🧩 Extending the System
+## 📋 Development Scripts
 
-New features should be implemented as **self-contained modules**.
+Available scripts:
 
-Steps to add a new module:
-
-1. Create module directory
-
-```
-app/modules/new_feature
-```
-
-2. Implement required components
-
-```
-models.py
-schemas.py
-repository.py
-service.py
-routes.py
-openapi.py
+```text
+scripts/
+├── start.sh
+├── lint.sh
+└── test.sh
 ```
 
-3. Register router inside:
+Typical usage:
 
-```
-app/api/v1/router.py
+```bash
+./scripts/start.sh
+./scripts/lint.sh
+./scripts/test.sh
 ```
 
-This ensures the system remains **modular and scalable**.
+On Windows, execute the equivalent Uvicorn, Ruff, mypy, and pytest commands
+directly when Bash is unavailable.
 
 ---
 
-# 📚 API Versioning Strategy
+## 📝 Logging
 
-All APIs are versioned using **URL-based versioning**.
+Use the shared logging factory:
+
+```python
+from app.core.logging import get_logger
+
+
+logger = get_logger(__name__)
+```
 
 Example:
 
-```
-/api/v1/templates
-/api/v1/products
-```
-
-Future versions may introduce:
-
-```
-/api/v2/...
+```python
+logger.info(
+    "Product created successfully",
+    extra={
+        "product_id": product_id,
+    },
+)
 ```
 
-This guarantees **backward compatibility** for clients.
+Never log:
+
+* database passwords,
+* complete database URLs,
+* access tokens,
+* authorization headers,
+* private file URLs,
+* medical data,
+* personal information,
+* unsanitized request bodies.
+
+Request-specific information should be propagated through the shared request
+context.
 
 ---
 
-# 🧑‍💻 Contribution Guidelines
+## 🔐 Security
 
-When contributing to this repository:
+The project supports production security practices such as:
 
-1. Keep routes thin
-2. Place business logic in services
-3. Use repositories only for persistence
-4. Use APIResponse for all responses
-5. Follow existing module structure
+* non-root Docker execution,
+* environment-based secret injection,
+* request size limits,
+* CORS configuration,
+* secure response headers,
+* explicit proxy trust,
+* strict input validation,
+* standardized error handling,
+* secret-safe logging,
+* external database configuration.
 
-Pull requests should include:
+Authentication and authorization should normally be handled by the platform's
+authentication service and API Gateway.
 
-- clear description
-- unit tests when applicable
-- documentation updates
+Internal identity headers may include:
 
----
-
-# 📌 Coding Standards
-
-The codebase follows modern Python best practices:
-
-- Python 3.11+
-- type annotations everywhere
-- explicit transaction boundaries
-- dependency injection via FastAPI
-
-General principles:
-
-```
-Thin Controllers
-Rich Services
-Explicit Infrastructure
+```text
+X-User-ID
+X-User-Role
+X-Request-ID
+X-Correlation-ID
 ```
 
----
-
-# 📎 Additional Resources
-
-Helpful documentation:
-
-FastAPI  
-https://fastapi.tiangolo.com/
-
-SQLAlchemy 2.0  
-https://docs.sqlalchemy.org/
-
-Pydantic  
-https://docs.pydantic.dev/
+These headers must only be trusted when the service is protected by the gateway
+and private network controls.
 
 ---
 
-# 📣 Maintainers
+## 🧵 Background Worker Support
 
-Maintained by Shiladitya Majumder and contributors.
+The project contains a future-ready worker structure:
 
-For questions or internal support, contact the service maintainers.
+```text
+app/worker/
+├── modules/
+├── tasks/
+├── beat.py
+├── celery_app.py
+├── config.py
+├── lifecycle.py
+├── routing.py
+└── signals.py
+```
+
+Celery is currently disabled.
+
+When enabled:
+
+* Celery runs as a separate process or container,
+* FastAPI does not start Celery,
+* worker task entry points remain thin,
+* business logic lives in worker services,
+* each worker child owns its own database registry,
+* database engines are created after process fork,
+* Beat schedules remain declarative.
 
 ---
 
-# ⭐ Final Notes
+## 📚 Documentation
 
-This repository is designed to serve as a **production-grade backend template** for building scalable Python services.
-
-Key characteristics:
-
-- clean architecture
-- modular feature design
-- infrastructure flexibility
-- strong operational observability
-
-It can serve as a foundation for:
-
-- internal APIs
-- microservices
-- enterprise backend systems
-- high-throughput platforms
+| Document          | Description                                  |
+| ----------------- | -------------------------------------------- |
+| `README.md`       | Project overview and quick start             |
+| `ARCHITECTURE.md` | Architecture, boundaries, and runtime design |
+| `STRUCTURE.md`    | Folder and file responsibilities             |
+| `DEVELOPMENT.md`  | Local development and contribution workflow  |
+| `TESTING.md`      | Testing strategy and conventions             |
 
 ---
+
+## 🚦 Recommended New-Service Workflow
+
+When creating a new microservice from this template:
+
+1. rename the project metadata,
+2. update `PROJECT_NAME`,
+3. update `.env.example`,
+4. configure the external database URL,
+5. remove or replace the example module,
+6. map the required database tables,
+7. create domain schemas,
+8. implement repositories,
+9. implement application services,
+10. expose API routes,
+11. add tests,
+12. update documentation,
+13. build and run the Docker image.
+
+---
+
+## 🧭 Architectural Guardrails
+
+1. Routers remain thin.
+2. Services contain business workflows.
+3. Repositories contain persistence logic.
+4. Unit of Work owns transactions.
+5. Database adapters own engines and pools.
+6. Configuration remains centralized.
+7. API fields use camelCase.
+8. Python code uses snake_case.
+9. Database schema changes remain outside business services.
+10. Optional integrations remain optional.
+11. FastAPI never starts Celery.
+12. Database sessions are never shared across requests.
+13. Worker children never reuse parent process pools.
+14. Secrets are never exposed in logs or responses.
+15. Tests follow the same layer boundaries as production code.
+
+---
+
+<div align="center">
+
+## 💡 Built for Consistent Python Microservices
+
+**Explicit architecture creates maintainable systems.**
+
+</div>

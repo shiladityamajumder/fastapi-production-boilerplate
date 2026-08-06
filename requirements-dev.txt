@@ -1,0 +1,231 @@
+# =============================================================================
+# FASTAPI SERVICE DEVELOPMENT DEPENDENCIES
+#
+# This file is intended for:
+#
+# - local development,
+# - automated testing,
+# - CI pipelines,
+# - linting,
+# - formatting,
+# - static type checking,
+# - coverage reporting,
+# - dependency security auditing.
+#
+# It includes the active runtime dependencies from ``requirements.txt`` and
+# then installs development-only tooling.
+#
+# Install with:
+#
+#     python -m pip install --requirement requirements-dev.txt
+#
+# Production containers should install only:
+#
+#     python -m pip install --requirement requirements.txt
+#
+# or install the default dependencies directly from ``pyproject.toml``.
+# =============================================================================
+
+
+# =============================================================================
+# ACTIVE RUNTIME DEPENDENCIES
+# =============================================================================
+
+# Reuse the runtime dependency file so development and production environments
+# use the same active FastAPI, SQLAlchemy, MySQL, and logging dependencies.
+-r requirements.txt
+
+
+# =============================================================================
+# TESTING FRAMEWORK
+# =============================================================================
+
+# Primary Python testing framework.
+pytest>=8.4,<10.0
+
+# Asyncio support for asynchronous unit and integration tests.
+pytest-asyncio>=1.1,<2.0
+
+# HTTP client used for FastAPI API and integration tests.
+#
+# FastAPI's TestClient and direct ASGI transport tests depend on HTTPX.
+httpx>=0.28,<1.0
+
+
+# =============================================================================
+# TEST COVERAGE
+# =============================================================================
+
+# Pytest plugin for collecting coverage while running tests.
+pytest-cov>=6.2,<8.0
+
+# Coverage engine with TOML configuration support.
+#
+# Configuration is stored in ``pyproject.toml``.
+coverage[toml]>=7.10,<8.0
+
+
+# =============================================================================
+# LINTING AND FORMATTING
+# =============================================================================
+
+# Ruff provides:
+#
+# - linting,
+# - import sorting,
+# - formatting,
+# - pycodestyle checks,
+# - Pyflakes checks,
+# - security-oriented rules,
+# - docstring validation,
+# - upgrade recommendations.
+#
+# Ruff configuration is stored in ``pyproject.toml``.
+ruff>=0.12,<1.0
+
+
+# =============================================================================
+# STATIC TYPE CHECKING
+# =============================================================================
+
+# Static type checker used for strict application-level type validation.
+#
+# Configuration is stored in ``pyproject.toml``.
+mypy>=1.17,<2.0
+
+# Type stubs for python-dateutil when used by application or test utilities.
+types-python-dateutil>=2.9,<3.0
+
+
+# =============================================================================
+# SECURITY AND DEPENDENCY AUDITING
+# =============================================================================
+
+# Checks installed dependencies against known vulnerability databases.
+pip-audit>=2.9,<3.0
+
+
+# =============================================================================
+# LOCAL DEVELOPMENT UTILITIES
+# =============================================================================
+
+# Pre-commit framework for running Ruff, mypy, and other checks before commits.
+pre-commit>=4.2,<5.0
+
+# Interactive Python debugger with improved terminal support.
+ipdb>=0.13,<1.0
+
+
+# =============================================================================
+# OPTIONAL TEST DATABASE DRIVERS — CURRENTLY DISABLED
+#
+# Uncomment only when the corresponding adapter and integration tests are
+# enabled.
+#
+# These packages are intentionally not installed by default because MySQL is
+# currently the only active database integration.
+# =============================================================================
+
+
+# -----------------------------------------------------------------------------
+# POSTGRESQL TEST SUPPORT
+#
+# Required only for PostgreSQL adapter integration tests.
+# -----------------------------------------------------------------------------
+
+# asyncpg>=0.30,<1.0
+
+
+# -----------------------------------------------------------------------------
+# MONGODB TEST SUPPORT
+#
+# Required only for MongoDB adapter integration tests.
+# -----------------------------------------------------------------------------
+
+# pymongo>=4.13,<5.0
+
+
+# -----------------------------------------------------------------------------
+# REDIS TEST SUPPORT
+#
+# Required only for Redis adapter, cache, distributed-lock, or Celery transport
+# integration tests.
+# -----------------------------------------------------------------------------
+
+# redis>=6.2,<8.0
+
+
+# -----------------------------------------------------------------------------
+# MICROSOFT SQL SERVER TEST SUPPORT
+#
+# Python packages alone are insufficient. The operating system must also have
+# a compatible Microsoft ODBC driver installed.
+# -----------------------------------------------------------------------------
+
+# aioodbc>=0.5,<1.0
+# pyodbc>=5.2,<6.0
+
+
+# =============================================================================
+# CELERY WORKER TEST SUPPORT — CURRENTLY DISABLED
+#
+# Uncomment only after the worker implementation, broker configuration, task
+# routing, lifecycle, and task tests are enabled.
+# =============================================================================
+
+# celery>=5.5,<6.0
+
+
+# =============================================================================
+# OPTIONAL ADVANCED TESTING TOOLS
+#
+# Enable these only when the project begins using the corresponding testing
+# strategy.
+# =============================================================================
+
+
+# -----------------------------------------------------------------------------
+# PROPERTY-BASED TESTING
+#
+# Useful for testing validation rules, serializers, and boundary conditions.
+# -----------------------------------------------------------------------------
+
+# hypothesis>=6.130,<7.0
+
+
+# -----------------------------------------------------------------------------
+# TEST TIME CONTROL
+#
+# Useful for deterministic tests involving dates, timeouts, and expiry rules.
+# -----------------------------------------------------------------------------
+
+# freezegun>=1.5,<2.0
+
+
+# -----------------------------------------------------------------------------
+# PARALLEL TEST EXECUTION
+#
+# Useful when the test suite becomes large enough to benefit from multiple
+# worker processes.
+# -----------------------------------------------------------------------------
+
+# pytest-xdist>=3.8,<4.0
+
+
+# -----------------------------------------------------------------------------
+# TEST TIMEOUT ENFORCEMENT
+#
+# Prevents blocked asynchronous or integration tests from hanging CI jobs.
+# -----------------------------------------------------------------------------
+
+# pytest-timeout>=2.4,<3.0
+
+
+# -----------------------------------------------------------------------------
+# RANDOMIZED TEST ORDER
+#
+# Helps detect tests that incorrectly depend on execution order or leaked
+# process state.
+# -----------------------------------------------------------------------------
+
+# pytest-randomly>=3.16,<4.0

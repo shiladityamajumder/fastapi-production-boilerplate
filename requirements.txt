@@ -1,31 +1,252 @@
-annotated-doc==0.0.4
-annotated-types==0.7.0
-anyio==4.12.1
-asyncpg==0.31.0
-click==8.3.1
-colorama==0.4.6
-dnspython==2.8.0
-fastapi==0.128.0
-greenlet==3.3.0
-h11==0.16.0
-idna==3.11
-motor==3.7.1
-packaging==26.0
-psycopg==3.3.3
-psycopg-binary==3.3.3
-psycopg2==2.9.11
-pydantic==2.12.5
-pydantic-settings==2.12.0
-pydantic_core==2.41.5
-pymongo==4.16.0
-python-dotenv==1.2.1
-pytz==2025.2
-redis==7.1.0
-setuptools==80.10.2
-SQLAlchemy==2.0.45
-starlette==0.50.0
-typing-inspection==0.4.2
-typing_extensions==4.15.0
-tzdata==2025.3
-uvicorn==0.40.0
-wheel==0.46.3
+# =============================================================================
+# FASTAPI SERVICE RUNTIME DEPENDENCIES
+#
+# This file contains dependencies required to run the current FastAPI service.
+#
+# Active infrastructure:
+#
+# - FastAPI
+# - Uvicorn
+# - Pydantic 2
+# - SQLAlchemy 2 async
+# - MySQL through asyncmy
+#
+# Currently disabled integrations are retained as commented references:
+#
+# - PostgreSQL
+# - MongoDB
+# - Redis
+# - Microsoft SQL Server
+# - Celery
+#
+# The preferred project dependency source is ``pyproject.toml``. This file is
+# retained for environments and deployment systems that still expect a
+# ``requirements.txt`` file.
+#
+# Install active runtime dependencies with:
+#
+#     python -m pip install --requirement requirements.txt
+#
+# Do not uncomment optional drivers unless their corresponding configuration,
+# registry integration, health checks, and tests have also been enabled.
+# =============================================================================
+
+
+# =============================================================================
+# WEB FRAMEWORK
+# =============================================================================
+
+# High-performance asynchronous Python API framework.
+fastapi>=0.115,<1.0
+
+# ASGI server used to run the FastAPI application.
+#
+# The ``standard`` extra installs recommended runtime dependencies such as:
+#
+# - uvloop on supported Unix environments,
+# - httptools,
+# - watchfiles,
+# - websockets,
+# - python-dotenv.
+uvicorn[standard]>=0.34,<1.0
+
+
+# =============================================================================
+# DATA VALIDATION AND APPLICATION SETTINGS
+# =============================================================================
+
+# Request validation, response serialization, and typed application models.
+pydantic>=2.11,<3.0
+
+# Environment-variable and .env-based application configuration.
+pydantic-settings>=2.10,<3.0
+
+
+# =============================================================================
+# DATABASE ORM
+# =============================================================================
+
+# SQLAlchemy 2 with asyncio support.
+#
+# The application uses asynchronous engines, sessions, and connection pools.
+SQLAlchemy[asyncio]>=2.0.40,<3.0
+
+
+# =============================================================================
+# MYSQL
+#
+# MySQL is the currently active database integration.
+# =============================================================================
+
+# Asynchronous MySQL and MariaDB driver used by SQLAlchemy.
+#
+# Expected SQLAlchemy URL format:
+#
+#     mysql+asyncmy://username:password@hostname:3306/database_name
+asyncmy>=0.2.11,<0.3
+
+
+# =============================================================================
+# STRUCTURED LOGGING
+# =============================================================================
+
+# JSON formatter used by the shared structured logging pipeline.
+python-json-logger>=3.3,<5.0
+
+
+# =============================================================================
+# TIMEZONE SUPPORT
+# =============================================================================
+
+# Windows installations may not include the IANA timezone database required by
+# Python's zoneinfo module.
+#
+# Linux Docker images usually provide timezone information through the
+# operating system, so this dependency is installed only on Windows.
+tzdata>=2025.2; platform_system == "Windows"
+
+
+# =============================================================================
+# POSTGRESQL — CURRENTLY DISABLED
+#
+# Uncomment only after:
+#
+# 1. PostgreSQL settings are enabled in ``app/core/config.py``.
+# 2. The PostgreSQL adapter is enabled in ``app/db/registry.py``.
+# 3. PostgreSQL dependencies are exposed through API dependencies if required.
+# 4. PostgreSQL readiness checks and integration tests are enabled.
+#
+# Expected SQLAlchemy URL format:
+#
+#     postgresql+asyncpg://username:password@hostname:5432/database_name
+# =============================================================================
+
+# asyncpg>=0.30,<1.0
+
+
+# =============================================================================
+# MONGODB — CURRENTLY DISABLED
+#
+# Modern PyMongo provides native asynchronous support through
+# ``AsyncMongoClient``.
+#
+# Uncomment only after:
+#
+# 1. MongoDB settings are enabled in ``app/core/config.py``.
+# 2. The MongoDB adapter is enabled in ``app/db/registry.py``.
+# 3. MongoDB lifecycle and readiness checks are enabled.
+# 4. MongoDB integration tests are available.
+#
+# Expected connection URL format:
+#
+#     mongodb://username:password@hostname:27017/database_name
+#
+# or:
+#
+#     mongodb+srv://username:password@cluster.example.net/database_name
+# =============================================================================
+
+# pymongo>=4.13,<5.0
+
+
+# =============================================================================
+# REDIS — CURRENTLY DISABLED
+#
+# Redis may later be used for:
+#
+# - application caching,
+# - distributed locking,
+# - idempotency keys,
+# - rate-limiting state,
+# - Celery broker or result backend.
+#
+# Uncomment only after:
+#
+# 1. Redis settings are enabled in ``app/core/config.py``.
+# 2. The Redis adapter is enabled in ``app/db/registry.py``.
+# 3. Redis lifecycle and readiness checks are enabled.
+# 4. Timeout, retry, serialization, and key-prefix rules are defined.
+#
+# Expected connection URL format:
+#
+#     redis://username:password@hostname:6379/0
+#
+# For TLS:
+#
+#     rediss://username:password@hostname:6379/0
+# =============================================================================
+
+# redis>=6.2,<8.0
+
+
+# =============================================================================
+# MICROSOFT SQL SERVER — CURRENTLY DISABLED
+#
+# SQLAlchemy asynchronous MSSQL access can use ``aioodbc`` with ``pyodbc``.
+#
+# Installing these Python packages is not sufficient by itself. The operating
+# system must also contain a compatible Microsoft ODBC driver, such as:
+#
+#     ODBC Driver 18 for SQL Server
+#
+# Uncomment only after:
+#
+# 1. MSSQL settings are enabled in ``app/core/config.py``.
+# 2. The MSSQL adapter is enabled in ``app/db/registry.py``.
+# 3. The Docker image installs the Microsoft ODBC system packages.
+# 4. MSSQL readiness checks and integration tests are enabled.
+#
+# Example SQLAlchemy URL:
+#
+#     mssql+aioodbc://username:password@hostname:1433/database_name
+#     ?driver=ODBC+Driver+18+for+SQL+Server
+#     &TrustServerCertificate=yes
+# =============================================================================
+
+# aioodbc>=0.5,<1.0
+# pyodbc>=5.2,<6.0
+
+
+# =============================================================================
+# CELERY WORKER — CURRENTLY DISABLED
+#
+# The FastAPI container currently runs only the web service.
+#
+# Uncomment Celery dependencies only after:
+#
+# 1. Worker settings are enabled in ``app/core/config.py``.
+# 2. Worker infrastructure under ``app/worker`` is activated.
+# 3. A broker is available.
+# 4. Task routing, lifecycle, signals, and task modules are tested.
+# 5. A separate worker process or container is configured.
+#
+# Redis should be uncommented above when it is selected as the Celery broker or
+# result backend.
+# =============================================================================
+
+# celery>=5.5,<6.0
+
+
+# =============================================================================
+# DEVELOPMENT AND TESTING DEPENDENCIES — NOT INSTALLED IN PRODUCTION
+#
+# Keep development tools in ``pyproject.toml`` under:
+#
+#     [project.optional-dependencies]
+#     dev = [...]
+#
+# Install them with:
+#
+#     python -m pip install --editable ".[dev]"
+#
+# They are intentionally not active in this runtime requirements file.
+# =============================================================================
+
+# pytest>=8.4,<10.0
+# pytest-asyncio>=1.1,<2.0
+# httpx>=0.28,<1.0
+# pytest-cov>=6.2,<8.0
+# coverage[toml]>=7.10,<8.0
+# ruff>=0.12,<1.0
+# mypy>=1.17,<2.0
+# pip-audit>=2.9,<3.0

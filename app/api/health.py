@@ -1,320 +1,306 @@
-# File: app/api/health.py
 """
-===============================================================================
-SERVICE HEALTH & READINESS PROBES
-===============================================================================
+File: app/api/health.py
 
-Provides operational health endpoints used by:
+Liveness, readiness, and bounded infrastructure diagnostics.
 
-    • Kubernetes
-    • Load balancers
-    • Infrastructure monitoring systems
-    • SRE debugging tools
+Health endpoints follow these rules:
 
--------------------------------------------------------------------------------
-HEALTH CHECK TYPES
--------------------------------------------------------------------------------
+- liveness checks only whether the ASGI process can respond,
+- readiness confirms startup completion and enabled dependency availability,
+- deep health exposes sanitized timings only when explicitly enabled,
+- disabled dependencies are omitted completely,
+- connection URLs, driver errors, credentials, and stack traces are never
+  exposed.
 
-This module implements three categories of health checks:
-
-1 LIVENESS PROBE
-
-    Endpoint:
-        GET /health/live
-
-    Purpose:
-        Indicates that the application process is alive.
-
-    Does NOT verify:
-        • database connectivity
-        • external dependencies
-
-    Typical usage:
-        Kubernetes livenessProbe
-
-    If this endpoint fails:
-        → container should be restarted.
-
--------------------------------------------------------------------------------
-
-2 READINESS PROBE
-
-    Endpoint:
-        GET /health/ready
-
-    Purpose:
-        Indicates that the service is ready to receive traffic.
-
-    Verifies:
-        • critical infrastructure connectivity
-
-    Example checks:
-        • primary SQL database
-        • Redis cache
-
-    Typical usage:
-        Kubernetes readinessProbe
-
-    If this endpoint fails:
-        → service removed from load balancer.
-
--------------------------------------------------------------------------------
-
-3 DEEP HEALTH CHECK
-
-    Endpoint:
-        GET /health/deep
-
-    Purpose:
-        Full infrastructure diagnostics for operators.
-
-    Verifies:
-        • all configured infrastructure components
-        • individual subsystem status
-
-    Intended for:
-        • observability dashboards
-        • debugging incidents
-        • SRE inspection
-
--------------------------------------------------------------------------------
-ARCHITECTURAL RULES
--------------------------------------------------------------------------------
-
-Health endpoints:
-
-    • must NOT execute heavy queries
-    • must NOT mutate state
-    • must remain extremely fast
-    • must tolerate partial infrastructure failure
-
-All checks use lightweight "ping" operations.
-
--------------------------------------------------------------------------------
-FAILURE POLICY
--------------------------------------------------------------------------------
-
-Liveness:
-    Always succeeds unless process is unhealthy.
-
-Readiness:
-    Fails if critical dependencies fail.
-
-Deep Health:
-    Returns full subsystem breakdown.
+Health routes remain outside the versioned API prefix.
 """
 
 from __future__ import annotations
 
-import time
-from typing import Dict, Any
-
-from fastapi import APIRouter, Request
+from fastapi import (
+    APIRouter,
+    Request,
+    status,
+)
+from fastapi.responses import JSONResponse
 
 from app.common.response import APIResponse
-from app.core.logging import get_logger
+from app.core.config import AppSettings
+from app.db.registry import (
+    DatabaseRegistry,
+    HealthStatus,
+)
 
-logger = get_logger("health")
 
 router = APIRouter(
     prefix="/health",
     tags=["Health"],
 )
 
-# =============================================================================
-# INTERNAL HEALTH CHECK UTILITIES
-# =============================================================================
 
-
-async def _check_postgres(db_registry) -> Dict[str, Any]:
-    """Check PostgreSQL connectivity."""
-    try:
-        if not db_registry.postgres:
-            return {"enabled": False}
-
-        await db_registry.postgres.ping()
-        return {"enabled": True, "status": "healthy"}
-
-    except Exception as exc:
-        logger.exception("Postgres health check failed")
-        return {"enabled": True, "status": "unhealthy", "error": str(exc)}
-
-
-async def _check_mysql(db_registry) -> Dict[str, Any]:
-    """Check MySQL connectivity."""
-    try:
-        if not db_registry.mysql:
-            return {"enabled": False}
-
-        await db_registry.mysql.ping()
-        return {"enabled": True, "status": "healthy"}
-
-    except Exception as exc:
-        logger.exception("MySQL health check failed")
-        return {"enabled": True, "status": "unhealthy", "error": str(exc)}
-
-
-async def _check_mssql(db_registry) -> Dict[str, Any]:
-    """Check MSSQL connectivity."""
-    try:
-        if not db_registry.mssql:
-            return {"enabled": False}
-
-        await db_registry.mssql.ping()
-        return {"enabled": True, "status": "healthy"}
-
-    except Exception as exc:
-        logger.exception("MSSQL health check failed")
-        return {"enabled": True, "status": "unhealthy", "error": str(exc)}
-
-
-async def _check_mongo(db_registry) -> Dict[str, Any]:
-    """Check MongoDB connectivity."""
-    try:
-        if not db_registry.mongo:
-            return {"enabled": False}
-
-        await db_registry.mongo.ping()
-        return {"enabled": True, "status": "healthy"}
-
-    except Exception as exc:
-        logger.exception("Mongo health check failed")
-        return {"enabled": True, "status": "unhealthy", "error": str(exc)}
-
-
-async def _check_redis(db_registry) -> Dict[str, Any]:
-    """Check Redis connectivity."""
-    try:
-        if not db_registry.redis:
-            return {"enabled": False}
-
-        await db_registry.redis.ping()
-        return {"enabled": True, "status": "healthy"}
-
-    except Exception as exc:
-        logger.exception("Redis health check failed")
-        return {"enabled": True, "status": "unhealthy", "error": str(exc)}
-
-
-# =============================================================================
-# LIVENESS PROBE
-# =============================================================================
-
-
-@router.get("/live")
-async def liveness():
+def _get_health_dependencies(
+    request: Request,
+) -> tuple[AppSettings, DatabaseRegistry]:
     """
-    Liveness probe.
+    Return health-check settings and infrastructure registry.
 
-    Indicates that the application process is running.
+    Args:
+        request: Current FastAPI request.
 
-    This endpoint should remain extremely lightweight
-    and should never depend on infrastructure.
+    Returns:
+        Tuple containing settings and infrastructure registry.
+
+    Raises:
+        RuntimeError: If application startup state is incomplete.
     """
 
-    return APIResponse.success(
-        message="Service is alive",
-        data={"status": "alive"},
+    settings = getattr(
+        request.app.state,
+        "settings",
+        None,
     )
 
+    registry = getattr(
+        request.app.state,
+        "db",
+        None,
+    )
 
-# =============================================================================
-# READINESS PROBE
-# =============================================================================
+    if not isinstance(settings, AppSettings):
+        raise RuntimeError(
+            "Application settings are unavailable"
+        )
+
+    if not isinstance(registry, DatabaseRegistry):
+        raise RuntimeError(
+            "Infrastructure registry is unavailable"
+        )
+
+    return settings, registry
 
 
-@router.get("/ready")
-async def readiness(request: Request):
+def _serialize_checks(
+    checks: dict[str, HealthStatus],
+    *,
+    include_duration: bool,
+) -> dict[str, dict[str, bool | float]]:
     """
-    Readiness probe.
+    Convert internal dependency results into a safe API payload.
 
-    Verifies that the service is ready to handle requests.
+    Only enabled adapters are present because ``DatabaseRegistry.check_all``
+    does not return disabled integrations.
 
-    This typically checks only **critical dependencies**
-    required for serving traffic.
+    Args:
+        checks: Health results indexed by adapter name.
+        include_duration: Include health-check timing when ``True``.
+
+    Returns:
+        Sanitized health-check payload.
     """
 
-    start = time.perf_counter()
+    serialized: dict[
+        str,
+        dict[str, bool | float],
+    ] = {}
 
-    db_registry = request.app.state.db
+    for name, result in checks.items():
+        payload: dict[str, bool | float] = {
+            "healthy": result.healthy,
+        }
 
-    postgres = await _check_postgres(db_registry)
-    redis = await _check_redis(db_registry)
+        if include_duration:
+            payload["durationMs"] = result.duration_ms
 
-    ready = True
+        serialized[name] = payload
 
-    if postgres.get("status") == "unhealthy":
-        ready = False
+    return serialized
 
-    if redis.get("status") == "unhealthy":
-        ready = False
 
-    duration_ms = round((time.perf_counter() - start) * 1000, 2)
+@router.get(
+    "/live",
+    summary="Process liveness",
+)
+async def liveness() -> JSONResponse:
+    """
+    Return success when the ASGI process can serve requests.
+
+    Liveness intentionally performs no database, Redis, or external-service
+    calls. Dependency failures must not cause an orchestrator to repeatedly
+    restart an otherwise functioning process.
+    """
 
     return APIResponse.success(
-        message="Service readiness check",
+        message="Service is alive.",
         data={
-            "ready": ready,
-            "checks": {
-                "postgres": postgres,
-                "redis": redis,
-            },
-            "duration_ms": duration_ms,
+            "status": "alive",
         },
     )
 
 
-# =============================================================================
-# DEEP HEALTH CHECK
-# =============================================================================
-
-
-@router.get("/deep")
-async def deep_health(request: Request):
+@router.get(
+    "/ready",
+    summary="Traffic readiness",
+)
+async def readiness(
+    request: Request,
+) -> JSONResponse:
     """
-    Full infrastructure health diagnostics.
+    Return whether the service is ready to receive application traffic.
 
-    This endpoint performs checks on all configured
-    infrastructure components and returns detailed
-    subsystem status.
+    The readiness endpoint checks only infrastructure adapters enabled for this
+    service. Each check is bounded by the configured timeout.
 
-    Intended for operators and monitoring systems.
+    Args:
+        request: Current FastAPI request.
+
+    Returns:
+        HTTP 200 when ready or HTTP 503 when unavailable.
     """
 
-    start = time.perf_counter()
+    if not getattr(
+        request.app.state,
+        "ready",
+        False,
+    ):
+        return APIResponse.error(
+            error_code="SERVICE_NOT_READY",
+            message="The service is not ready to receive traffic.",
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        )
 
-    db_registry = request.app.state.db
+    try:
+        settings, registry = _get_health_dependencies(
+            request
+        )
+    except RuntimeError:
+        return APIResponse.error(
+            error_code="SERVICE_NOT_READY",
+            message="The service is not ready to receive traffic.",
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        )
 
-    postgres = await _check_postgres(db_registry)
-    mysql = await _check_mysql(db_registry)
-    mssql = await _check_mssql(db_registry)
-    mongo = await _check_mongo(db_registry)
-    redis = await _check_redis(db_registry)
+    checks = await registry.check_all(
+        timeout_seconds=(
+            settings.HEALTHCHECK_TIMEOUT_SECONDS
+        ),
+    )
 
-    checks = {
-        "postgres": postgres,
-        "mysql": mysql,
-        "mssql": mssql,
-        "mongo": mongo,
-        "redis": redis,
-    }
+    ready = all(
+        result.healthy
+        for result in checks.values()
+    )
+
+    serialized_checks = _serialize_checks(
+        checks,
+        include_duration=False,
+    )
+
+    if not ready:
+        return APIResponse.error(
+            error_code="SERVICE_NOT_READY",
+            message=(
+                "One or more required dependencies are unavailable."
+            ),
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            details={
+                "checks": serialized_checks,
+            },
+        )
+
+    return APIResponse.success(
+        message="Service is ready to receive traffic.",
+        data={
+            "ready": True,
+            "checks": serialized_checks,
+        },
+    )
+
+
+@router.get(
+    "/deep",
+    summary="Detailed infrastructure diagnostics",
+)
+async def deep_health(
+    request: Request,
+) -> JSONResponse:
+    """
+    Return sanitized dependency status and execution timing.
+
+    The endpoint is hidden logically when deep diagnostics are disabled. It
+    never returns raw exceptions, hosts, connection URLs, credentials, or
+    database driver details.
+
+    Args:
+        request: Current FastAPI request.
+
+    Returns:
+        Sanitized dependency health response.
+    """
+
+    settings = getattr(
+        request.app.state,
+        "settings",
+        None,
+    )
+
+    if (
+        not isinstance(settings, AppSettings)
+        or not settings.DEEP_HEALTH_ENABLED
+    ):
+        return APIResponse.error(
+            error_code="ROUTE_NOT_FOUND",
+            message="The requested route was not found.",
+            status_code=status.HTTP_404_NOT_FOUND,
+        )
+
+    registry = getattr(
+        request.app.state,
+        "db",
+        None,
+    )
+
+    if not isinstance(registry, DatabaseRegistry):
+        return APIResponse.error(
+            error_code="SERVICE_NOT_READY",
+            message="The service is not ready to receive traffic.",
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        )
+
+    checks = await registry.check_all(
+        timeout_seconds=(
+            settings.HEALTHCHECK_TIMEOUT_SECONDS
+        ),
+    )
 
     healthy = all(
-        svc.get("status", "healthy") != "unhealthy"
-        for svc in checks.values()
-        if svc.get("enabled")
+        result.healthy
+        for result in checks.values()
     )
 
-    duration_ms = round((time.perf_counter() - start) * 1000, 2)
+    payload = {
+        "healthy": healthy,
+        "checks": _serialize_checks(
+            checks,
+            include_duration=True,
+        ),
+    }
+
+    if not healthy:
+        return APIResponse.error(
+            error_code="DEPENDENCY_HEALTH_CHECK_FAILED",
+            message=(
+                "One or more dependencies failed the health check."
+            ),
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            details=payload,
+        )
 
     return APIResponse.success(
-        message="Deep health diagnostics",
-        data={
-            "healthy": healthy,
-            "checks": checks,
-            "duration_ms": duration_ms,
-        },
+        message="All enabled dependencies are healthy.",
+        data=payload,
     )
 
 
-__all__ = ["router"]
+__all__ = [
+    "router",
+]

@@ -1,92 +1,76 @@
-# File: app/core/config.py
 """
-===============================================================================
-APPLICATION CONFIGURATION (PRODUCTION-HARDENED, MULTI-DB SAFE)
-===============================================================================
+File: app/core/config.py
 
-Centralized configuration model for the entire application.
+Typed, immutable, environment-driven application configuration.
 
-Design goals:
+Settings are loaded from environment variables and an optional local ``.env``
+file. Validation is performed once per process through ``get_settings()``.
 
-    - 12-Factor compliant
-    - deterministic startup validation
-    - strict infrastructure configuration
-    - multi-database safe
-    - production hardened
+Current active infrastructure:
 
--------------------------------------------------------------------------------
-FAILURE PHILOSOPHY
--------------------------------------------------------------------------------
+- MySQL
 
-If infrastructure is enabled but misconfigured:
+Reference integrations retained as commented code:
 
-    → application must fail during startup.
+- Microsoft SQL Server
+- PostgreSQL
+- MongoDB
+- Redis
+- Celery background jobs
 
-Silent degradation is forbidden.
+Unused email, notification, AI, and other external-service configuration is
+intentionally excluded. Such settings should be introduced only when the
+corresponding integration is implemented.
 
--------------------------------------------------------------------------------
-MULTI-DB SUPPORT
--------------------------------------------------------------------------------
+This module is limited to configuration parsing and validation. It must not:
 
-Multiple databases may be enabled simultaneously:
-
-    PostgreSQL
-    MySQL
-    MSSQL
-    MongoDB
-    Redis
-
-Each ENABLE_* flag activates strict validation for its configuration.
-
--------------------------------------------------------------------------------
-PRODUCTION HARDENING
--------------------------------------------------------------------------------
-
-In production:
-
-    - DEBUG must be False
-    - DB_ECHO must be False
+- initialize logging,
+- create directories,
+- connect to databases,
+- initialize cache clients,
+- initialize background workers,
+- or mutate external state.
 """
 
 from __future__ import annotations
 
 import logging
-from enum import Enum
+from enum import StrEnum
 from functools import lru_cache
 from pathlib import Path
-from zoneinfo import ZoneInfo
+from urllib.parse import urlparse
+from zoneinfo import (
+    ZoneInfo,
+    ZoneInfoNotFoundError,
+)
 
-from pydantic import model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import (
+    Field,
+    SecretStr,
+    field_validator,
+    model_validator,
+)
+from pydantic_settings import (
+    BaseSettings,
+    SettingsConfigDict,
+)
 
 
-# =============================================================================
-# ENVIRONMENT
-# =============================================================================
-
-
-class Environment(str, Enum):
+class Environment(StrEnum):
+    """Supported application runtime environments."""
 
     DEVELOPMENT = "development"
-    PRODUCTION = "production"
     TESTING = "testing"
-
-
-# =============================================================================
-# SETTINGS MODEL
-# =============================================================================
+    PRODUCTION = "production"
 
 
 class AppSettings(BaseSettings):
     """
-    Centralized application configuration.
+    Validated process-level application settings.
 
-    Characteristics:
-
-        - immutable after initialization
-        - environment driven
-        - strictly validated
-        - safe for concurrent access
+    Settings are immutable after initialization. Infrastructure adapters should
+    receive this object through dependency injection instead of reading
+    environment variables directly.
     """
 
     model_config = SettingsConfigDict(
@@ -97,275 +81,1319 @@ class AppSettings(BaseSettings):
         frozen=True,
     )
 
-    # -------------------------------------------------------------------------
-    # CORE
-    # -------------------------------------------------------------------------
+    # =========================================================================
+    # APPLICATION
+    # =========================================================================
 
     ENVIRONMENT: Environment = Environment.DEVELOPMENT
-
-    PROJECT_NAME: str = "SSPL_INV"
-
+    PROJECT_NAME: str = "fastapi_service"
+    APP_VERSION: str = "1.0.0"
     API_V1_STR: str = "/api/v1"
 
     DEBUG: bool = False
+    TIMEZONE: str = "Asia/Kolkata"
 
-    TIMEZONE: str = "UTC"
-
-    BASE_DIR: Path = Path(__file__).resolve().parent.parent.parent
-
-    # -------------------------------------------------------------------------
-    # LOGGING
-    # -------------------------------------------------------------------------
-
-    LOG_LEVEL: str = "INFO"
-
-    LOG_DIR: Path = Path("logs")
-
-    LOG_FILE: str = "app.log"
-
-    LOG_MAX_BYTES: int = 10_000_000
-
-    LOG_BACKUP_COUNT: int = 5
-
-    # -------------------------------------------------------------------------
-    # DATABASE POOL
-    # -------------------------------------------------------------------------
-
-    DB_POOL_SIZE: int = 20
-
-    DB_MAX_OVERFLOW: int = 10
-
-    DB_POOL_TIMEOUT: int = 30
-
-    DB_POOL_RECYCLE: int = 1800
-
-    DB_POOL_PRE_PING: bool = True
-
-    DB_ECHO: bool = False
-
-    # -------------------------------------------------------------------------
-    # POSTGRES
-    # -------------------------------------------------------------------------
-
-    ENABLE_POSTGRES: bool = False
-
-    POSTGRES_ASYNC_URL: str | None = None
-
-    POSTGRES_SYNC_URL: str | None = None
-
-    # -------------------------------------------------------------------------
-    # MYSQL
-    # -------------------------------------------------------------------------
-
-    ENABLE_MYSQL: bool = False
-
-    MYSQL_URL: str | None = None
-
-    # -------------------------------------------------------------------------
-    # MSSQL
-    # -------------------------------------------------------------------------
-
-    ENABLE_MSSQL: bool = False
-
-    MSSQL_URL: str | None = None
-
-    # -------------------------------------------------------------------------
-    # REDIS
-    # -------------------------------------------------------------------------
-
-    ENABLE_REDIS: bool = False
-
-    REDIS_URL: str | None = None
-
-    REDIS_MAX_CONNECTIONS: int = 100
-
-    REDIS_SOCKET_TIMEOUT: int = 5
-
-    REDIS_SOCKET_CONNECT_TIMEOUT: int = 5
-
-    RATE_LIMIT_ENABLED: bool = False
-
-    RATE_LIMIT_PER_MINUTE: int = 60
-
-    # -------------------------------------------------------------------------
-    # MONGODB
-    # -------------------------------------------------------------------------
-
-    ENABLE_MONGO: bool = False
-
-    MONGO_URI: str | None = None
-
-    MONGO_DB_NAME: str | None = None
-
-    MONGO_MIN_POOL_SIZE: int = 1
-
-    MONGO_MAX_POOL_SIZE: int = 10
-
-    MONGO_SERVER_SELECTION_TIMEOUT_MS: int = 5000
-
-    # -------------------------------------------------------------------------
-    # SERVER
-    # -------------------------------------------------------------------------
-
-    PORT: int = 8888
+    BASE_DIR: Path = Path(__file__).resolve().parents[2]
 
     # =========================================================================
-    # VALIDATION
+    # SERVER
+    # =========================================================================
+
+    # ASGI server bind address. This setting does not perform HTTP Host-header
+    # validation.
+    HOST: str = "0.0.0.0"
+
+    PORT: int = Field(
+        default=8000,
+        ge=1,
+        le=65_535,
+    )
+
+    CORS_ALLOWED_ORIGINS: list[str] = Field(
+        default_factory=list,
+    )
+
+    CORS_ALLOW_CREDENTIALS: bool = False
+
+    MAX_REQUEST_BODY_BYTES: int = Field(
+        default=2_097_152,
+        ge=1,
+    )
+
+    SLOW_REQUEST_THRESHOLD_MS: int = Field(
+        default=1_000,
+        ge=1,
+    )
+
+    SECURE_HEADERS_ENABLED: bool = True
+    HSTS_ENABLED: bool = False
+
+    # Proxy headers should be trusted only when requests are guaranteed to pass
+    # through an approved gateway, reverse proxy, or load balancer.
+    TRUST_PROXY_HEADERS: bool = False
+    TRUSTED_PROXY_IPS: str = ""
+
+    # =========================================================================
+    # LOGGING
+    # =========================================================================
+
+    LOG_LEVEL: str = "INFO"
+    LOG_JSON: bool = False
+    LOG_TO_FILE: bool = False
+
+    LOG_DIR: Path = Path("logs")
+    LOG_FILE: str = "app.log"
+
+    LOG_MAX_BYTES: int = Field(
+        default=10_000_000,
+        ge=1,
+    )
+
+    LOG_BACKUP_COUNT: int = Field(
+        default=5,
+        ge=0,
+    )
+
+    LOG_QUEUE_SIZE: int = Field(
+        default=10_000,
+        ge=100,
+    )
+
+    SENSITIVE_DATA_REDACTION_ENABLED: bool = True
+
+    # =========================================================================
+    # HEALTH CHECKS
+    # =========================================================================
+
+    HEALTHCHECK_TIMEOUT_SECONDS: float = Field(
+        default=3.0,
+        gt=0,
+    )
+
+    DEEP_HEALTH_ENABLED: bool = True
+
+    # =========================================================================
+    # SHARED SQLALCHEMY POOL SETTINGS
+    # =========================================================================
+
+    SQL_POOL_SIZE: int = Field(
+        default=10,
+        ge=1,
+    )
+
+    SQL_MAX_OVERFLOW: int = Field(
+        default=10,
+        ge=0,
+    )
+
+    SQL_POOL_TIMEOUT_SECONDS: int = Field(
+        default=10,
+        ge=1,
+    )
+
+    SQL_POOL_RECYCLE_SECONDS: int = Field(
+        default=1_800,
+        ge=0,
+    )
+
+    SQL_POOL_PRE_PING: bool = True
+    SQL_POOL_USE_LIFO: bool = True
+    SQL_ECHO: bool = False
+
+    # =========================================================================
+    # MYSQL - ACTIVE DATABASE
+    # =========================================================================
+
+    ENABLE_MYSQL: bool = False
+    MYSQL_URL: SecretStr | None = None
+
+    MYSQL_CONNECT_TIMEOUT_SECONDS: int = Field(
+        default=5,
+        ge=1,
+    )
+
+    # =========================================================================
+    # MICROSOFT SQL SERVER - COMMENTED REFERENCE
+    # =========================================================================
+    #
+    # To enable Microsoft SQL Server:
+    #
+    # 1. Uncomment this settings block.
+    # 2. Uncomment ``_validate_mssql_configuration``.
+    # 3. Uncomment its call inside ``validate_cross_field_rules``.
+    # 4. Uncomment ``mssql_url_value``.
+    # 5. Uncomment MSSQL sections in ``app/db/registry.py``.
+    # 6. Uncomment MSSQL sections in ``app/api/dependencies.py``.
+    # 7. Ensure ``app/db/mssql.py`` is active.
+    # 8. Install ``aioodbc`` and ``pyodbc``.
+    # 9. Configure ``ENABLE_MSSQL`` and ``MSSQL_URL``.
+    #
+    # ENABLE_MSSQL: bool = False
+    # MSSQL_URL: SecretStr | None = None
+    #
+    # MSSQL_CONNECT_TIMEOUT_SECONDS: int = Field(
+    #     default=5,
+    #     ge=1,
+    # )
+    #
+    # MSSQL_TRUST_SERVER_CERTIFICATE: bool = False
+
+    # =========================================================================
+    # POSTGRESQL - COMMENTED REFERENCE
+    # =========================================================================
+    #
+    # To enable PostgreSQL:
+    #
+    # 1. Uncomment this settings block.
+    # 2. Uncomment ``_validate_postgres_configuration``.
+    # 3. Uncomment its call inside ``validate_cross_field_rules``.
+    # 4. Uncomment ``postgres_url_value``.
+    # 5. Uncomment PostgreSQL sections in ``app/db/registry.py``.
+    # 6. Uncomment PostgreSQL sections in ``app/api/dependencies.py``.
+    # 7. Ensure ``app/db/postgres.py`` is active.
+    # 8. Install ``asyncpg``.
+    # 9. Configure ``ENABLE_POSTGRES`` and ``POSTGRES_URL``.
+    #
+    # ENABLE_POSTGRES: bool = False
+    # POSTGRES_URL: SecretStr | None = None
+    #
+    # POSTGRES_CONNECT_TIMEOUT_SECONDS: int = Field(
+    #     default=5,
+    #     ge=1,
+    # )
+    #
+    # POSTGRES_COMMAND_TIMEOUT_SECONDS: int = Field(
+    #     default=30,
+    #     ge=1,
+    # )
+    #
+    # POSTGRES_APPLICATION_NAME: str = ""
+
+    # =========================================================================
+    # MONGODB - COMMENTED REFERENCE
+    # =========================================================================
+    #
+    # To enable MongoDB:
+    #
+    # 1. Uncomment this settings block.
+    # 2. Uncomment the MongoDB field validators.
+    # 3. Uncomment ``_validate_mongo_configuration``.
+    # 4. Uncomment its call inside ``validate_cross_field_rules``.
+    # 5. Uncomment ``mongo_uri_value``.
+    # 6. Uncomment MongoDB sections in ``app/db/registry.py``.
+    # 7. Uncomment MongoDB sections in ``app/api/dependencies.py``.
+    # 8. Ensure ``app/db/mongo.py`` is active.
+    # 9. Install ``pymongo``.
+    # 10. Configure ``ENABLE_MONGO``, ``MONGO_URI``, and ``MONGO_DB_NAME``.
+    #
+    # ENABLE_MONGO: bool = False
+    # MONGO_URI: SecretStr | None = None
+    # MONGO_DB_NAME: str | None = None
+    #
+    # MONGO_MIN_POOL_SIZE: int = Field(
+    #     default=1,
+    #     ge=0,
+    # )
+    #
+    # MONGO_MAX_POOL_SIZE: int = Field(
+    #     default=50,
+    #     ge=1,
+    # )
+    #
+    # MONGO_SERVER_SELECTION_TIMEOUT_MS: int = Field(
+    #     default=3_000,
+    #     ge=1,
+    # )
+    #
+    # MONGO_CONNECT_TIMEOUT_MS: int = Field(
+    #     default=3_000,
+    #     ge=1,
+    # )
+    #
+    # MONGO_SOCKET_TIMEOUT_MS: int = Field(
+    #     default=5_000,
+    #     ge=1,
+    # )
+    #
+    # MONGO_RETRY_WRITES: bool = True
+    # MONGO_READ_PREFERENCE: str = "primary"
+    # MONGO_WRITE_CONCERN: str = "majority"
+
+    # =========================================================================
+    # REDIS - COMMENTED REFERENCE
+    # =========================================================================
+    #
+    # To enable Redis:
+    #
+    # 1. Uncomment this settings block.
+    # 2. Uncomment ``_validate_redis_configuration``.
+    # 3. Uncomment its call inside ``validate_cross_field_rules``.
+    # 4. Uncomment ``redis_url_value``.
+    # 5. Uncomment Redis sections in ``app/db/registry.py``.
+    # 6. Uncomment Redis sections in ``app/api/dependencies.py``.
+    # 7. Ensure ``app/db/redis_client.py`` is active.
+    # 8. Install ``redis``.
+    # 9. Configure ``ENABLE_REDIS`` and ``REDIS_URL``.
+    #
+    # ENABLE_REDIS: bool = False
+    # REDIS_URL: SecretStr | None = None
+    #
+    # REDIS_MAX_CONNECTIONS: int = Field(
+    #     default=100,
+    #     ge=1,
+    # )
+    #
+    # REDIS_SOCKET_TIMEOUT_SECONDS: float = Field(
+    #     default=2.0,
+    #     gt=0,
+    # )
+    #
+    # REDIS_CONNECT_TIMEOUT_SECONDS: float = Field(
+    #     default=2.0,
+    #     gt=0,
+    # )
+    #
+    # REDIS_HEALTH_CHECK_INTERVAL_SECONDS: int = Field(
+    #     default=30,
+    #     ge=1,
+    # )
+    #
+    # REDIS_RETRY_ON_TIMEOUT: bool = True
+    # REDIS_KEY_PREFIX: str = "fastapi-service"
+    #
+    # REDIS_DEFAULT_TTL_SECONDS: int = Field(
+    #     default=300,
+    #     ge=1,
+    # )
+
+    # =========================================================================
+    # CELERY AND BACKGROUND JOBS - COMMENTED REFERENCE
+    # =========================================================================
+    #
+    # To enable Celery:
+    #
+    # 1. Uncomment this settings block.
+    # 2. Uncomment ``_validate_background_jobs_configuration``.
+    # 3. Uncomment its call inside ``validate_cross_field_rules``.
+    # 4. Uncomment the Celery URL validation helper.
+    # 5. Uncomment the Celery derived properties.
+    # 6. Activate the files inside ``app/tasks``.
+    # 7. Install ``celery`` and the selected broker transport dependency.
+    # 8. Configure ``BACKGROUND_JOBS_ENABLED`` and ``CELERY_BROKER_URL``.
+    #
+    # Redis is not automatically required by Celery. Celery may use Redis,
+    # RabbitMQ, or another explicitly supported broker.
+    #
+    # BACKGROUND_JOBS_ENABLED: bool = False
+    #
+    # CELERY_BROKER_URL: SecretStr | None = None
+    # CELERY_RESULT_BACKEND: SecretStr | None = None
+    #
+    # CELERY_TASK_ALWAYS_EAGER: bool = False
+    # CELERY_TASK_IGNORE_RESULT: bool = True
+    #
+    # CELERY_TASK_TIME_LIMIT_SECONDS: int = Field(
+    #     default=300,
+    #     ge=1,
+    # )
+    #
+    # CELERY_TASK_SOFT_TIME_LIMIT_SECONDS: int = Field(
+    #     default=270,
+    #     ge=1,
+    # )
+    #
+    # CELERY_WORKER_CONCURRENCY: int = Field(
+    #     default=4,
+    #     ge=1,
+    # )
+    #
+    # CELERY_TASK_MAX_RETRIES: int = Field(
+    #     default=3,
+    #     ge=0,
+    # )
+    #
+    # CELERY_TASK_DEFAULT_QUEUE: str = "default"
+
+    # =========================================================================
+    # FIELD VALIDATORS
+    # =========================================================================
+
+    @field_validator("API_V1_STR")
+    @classmethod
+    def validate_api_prefix(
+        cls,
+        value: str,
+    ) -> str:
+        """
+        Normalize and validate the versioned API path prefix.
+
+        Args:
+            value: Configured API prefix.
+
+        Returns:
+            Normalized API prefix.
+
+        Raises:
+            ValueError: If the prefix is invalid.
+        """
+
+        normalized = value.strip()
+
+        if not normalized:
+            raise ValueError(
+                "API_V1_STR must not be blank"
+            )
+
+        if not normalized.startswith("/"):
+            raise ValueError(
+                "API_V1_STR must start with '/'"
+            )
+
+        if normalized == "/":
+            raise ValueError(
+                "API_V1_STR must not use the root path"
+            )
+
+        if "?" in normalized or "#" in normalized:
+            raise ValueError(
+                "API_V1_STR must not contain query parameters or fragments"
+            )
+
+        return normalized.rstrip("/")
+
+    @field_validator(
+        "PROJECT_NAME",
+        "APP_VERSION",
+        "LOG_FILE",
+    )
+    @classmethod
+    def validate_required_identifiers(
+        cls,
+        value: str,
+    ) -> str:
+        """
+        Normalize and validate required identifier settings.
+
+        Args:
+            value: Configured identifier.
+
+        Returns:
+            Stripped identifier.
+
+        Raises:
+            ValueError: If the identifier is blank.
+        """
+
+        normalized = value.strip()
+
+        if not normalized:
+            raise ValueError(
+                "value must not be blank"
+            )
+
+        return normalized
+
+    @field_validator(
+        "CORS_ALLOWED_ORIGINS",
+        mode="before",
+    )
+    @classmethod
+    def parse_cors_allowed_origins(
+        cls,
+        value: object,
+    ) -> list[str]:
+        """
+        Parse and normalize allowed CORS origins.
+
+        Environment values may be supplied as:
+
+        - a JSON-style list parsed by the settings library,
+        - a Python list, tuple, or set,
+        - a comma-separated string.
+
+        Args:
+            value: Raw configured origins.
+
+        Returns:
+            Normalized and deduplicated origins.
+
+        Raises:
+            ValueError: If the value cannot be interpreted as a string list.
+        """
+
+        if value is None or value == "":
+            return []
+
+        if isinstance(value, str):
+            values = value.split(",")
+
+        elif isinstance(
+            value,
+            (
+                list,
+                tuple,
+                set,
+            ),
+        ):
+            values = list(value)
+
+        else:
+            raise ValueError(
+                "CORS_ALLOWED_ORIGINS must be a list or "
+                "comma-separated string"
+            )
+
+        normalized = [
+            str(item).strip()
+            for item in values
+            if str(item).strip()
+        ]
+
+        return list(
+            dict.fromkeys(normalized)
+        )
+
+    @field_validator("LOG_LEVEL")
+    @classmethod
+    def normalize_log_level(
+        cls,
+        value: str,
+    ) -> str:
+        """
+        Normalize and validate the Python logging level.
+
+        Args:
+            value: Configured log level.
+
+        Returns:
+            Uppercase logging level.
+
+        Raises:
+            ValueError: If the level is unknown.
+        """
+
+        normalized = value.strip().upper()
+
+        if normalized not in logging.getLevelNamesMapping():
+            raise ValueError(
+                f"Invalid LOG_LEVEL: {value}"
+            )
+
+        return normalized
+
+    @field_validator("TIMEZONE")
+    @classmethod
+    def validate_timezone(
+        cls,
+        value: str,
+    ) -> str:
+        """
+        Validate the configured IANA timezone.
+
+        Args:
+            value: Configured timezone name.
+
+        Returns:
+            Normalized timezone name.
+
+        Raises:
+            ValueError: If the timezone is blank or invalid.
+        """
+
+        normalized = value.strip()
+
+        if not normalized:
+            raise ValueError(
+                "TIMEZONE must not be blank"
+            )
+
+        try:
+            ZoneInfo(normalized)
+
+        except ZoneInfoNotFoundError as exc:
+            raise ValueError(
+                f"Invalid TIMEZONE: {normalized}"
+            ) from exc
+
+        return normalized
+
+    @field_validator("HOST")
+    @classmethod
+    def validate_host(
+        cls,
+        value: str,
+    ) -> str:
+        """
+        Normalize the ASGI server bind address.
+
+        This setting controls where the server listens. It does not validate
+        incoming HTTP Host headers.
+
+        Args:
+            value: Configured server bind address.
+
+        Returns:
+            Normalized bind address.
+
+        Raises:
+            ValueError: If the address is blank.
+        """
+
+        normalized = value.strip()
+
+        if not normalized:
+            raise ValueError(
+                "HOST must not be blank"
+            )
+
+        return normalized
+
+    @field_validator("TRUSTED_PROXY_IPS")
+    @classmethod
+    def normalize_optional_strings(
+        cls,
+        value: str,
+    ) -> str:
+        """
+        Normalize optional string configuration.
+
+        Args:
+            value: Raw string value.
+
+        Returns:
+            Stripped string value.
+        """
+
+        return value.strip()
+
+    # -------------------------------------------------------------------------
+    # POSTGRESQL FIELD VALIDATOR - COMMENTED REFERENCE
+    # -------------------------------------------------------------------------
+    #
+    # Add ``POSTGRES_APPLICATION_NAME`` to ``normalize_optional_strings`` when
+    # PostgreSQL support is enabled.
+
+    # -------------------------------------------------------------------------
+    # MONGODB FIELD VALIDATORS - COMMENTED REFERENCE
+    # -------------------------------------------------------------------------
+    #
+    # Uncomment when MongoDB support is enabled.
+    #
+    # @field_validator("MONGO_DB_NAME")
+    # @classmethod
+    # def normalize_optional_database_name(
+    #     cls,
+    #     value: str | None,
+    # ) -> str | None:
+    #     """Normalize an optional MongoDB database name."""
+    #
+    #     if value is None:
+    #         return None
+    #
+    #     normalized = value.strip()
+    #     return normalized or None
+    #
+    #
+    # @field_validator(
+    #     "MONGO_READ_PREFERENCE",
+    #     "MONGO_WRITE_CONCERN",
+    # )
+    # @classmethod
+    # def normalize_mongo_strings(
+    #     cls,
+    #     value: str,
+    # ) -> str:
+    #     """Normalize MongoDB string settings."""
+    #
+    #     return value.strip()
+
+    # =========================================================================
+    # CROSS-FIELD VALIDATION
     # =========================================================================
 
     @model_validator(mode="after")
-    def validate_settings(self) -> "AppSettings":
+    def validate_cross_field_rules(
+        self,
+    ) -> AppSettings:
+        """
+        Validate integration dependencies and production safety rules.
 
-        # -------------------------
-        # Logging
-        # -------------------------
+        Returns:
+            Validated settings instance.
+        """
 
-        if self.LOG_LEVEL.upper() not in logging._nameToLevel:
-            raise ValueError(f"Invalid LOG_LEVEL: {self.LOG_LEVEL}")
+        self._validate_database_pool_configuration()
+        self._validate_mysql_configuration()
 
-        try:
-            ZoneInfo(self.TIMEZONE)
-        except Exception:
-            raise ValueError(f"Invalid TIMEZONE: {self.TIMEZONE}")
+        # ---------------------------------------------------------------------
+        # OPTIONAL DATABASE VALIDATION
+        #
+        # Uncomment a validation call only after enabling the corresponding
+        # settings and implementation blocks.
+        # ---------------------------------------------------------------------
+        # self._validate_mssql_configuration()
+        # self._validate_postgres_configuration()
+        # self._validate_mongo_configuration()
+        # self._validate_redis_configuration()
 
-        # -------------------------
-        # Server
-        # -------------------------
+        # ---------------------------------------------------------------------
+        # CELERY VALIDATION
+        #
+        # Uncomment only after Celery configuration and task files are enabled.
+        # ---------------------------------------------------------------------
+        # self._validate_background_jobs_configuration()
 
-        if not (0 < self.PORT <= 65535):
-            raise ValueError("PORT must be between 1 and 65535")
-
-        # -------------------------
-        # DB pool
-        # -------------------------
-
-        if self.DB_POOL_SIZE <= 0:
-            raise ValueError("DB_POOL_SIZE must be > 0")
-
-        if self.DB_MAX_OVERFLOW < 0:
-            raise ValueError("DB_MAX_OVERFLOW must be >= 0")
-
-        if self.DB_POOL_TIMEOUT <= 0:
-            raise ValueError("DB_POOL_TIMEOUT must be > 0")
-
-        if self.DB_POOL_RECYCLE < 0:
-            raise ValueError("DB_POOL_RECYCLE must be >= 0")
-
-        # -------------------------
-        # PostgreSQL
-        # -------------------------
-
-        if self.ENABLE_POSTGRES:
-            if not self.POSTGRES_ASYNC_URL:
-                raise ValueError("POSTGRES_ASYNC_URL required")
-
-            if not self.POSTGRES_SYNC_URL:
-                raise ValueError("POSTGRES_SYNC_URL required")
-
-        # -------------------------
-        # MySQL
-        # -------------------------
-
-        if self.ENABLE_MYSQL and not self.MYSQL_URL:
-            raise ValueError("MYSQL_URL required")
-
-        # -------------------------
-        # MSSQL
-        # -------------------------
-
-        if self.ENABLE_MSSQL and not self.MSSQL_URL:
-            raise ValueError("MSSQL_URL required")
-
-        # -------------------------
-        # Redis
-        # -------------------------
-
-        if self.ENABLE_REDIS:
-
-            if not self.REDIS_URL:
-                raise ValueError("REDIS_URL required")
-
-            if self.REDIS_MAX_CONNECTIONS <= 0:
-                raise ValueError("REDIS_MAX_CONNECTIONS must be > 0")
-
-            if self.REDIS_SOCKET_TIMEOUT <= 0:
-                raise ValueError("REDIS_SOCKET_TIMEOUT must be > 0")
-
-            if self.REDIS_SOCKET_CONNECT_TIMEOUT <= 0:
-                raise ValueError(
-                    "REDIS_SOCKET_CONNECT_TIMEOUT must be > 0"
-                )
-
-        if self.RATE_LIMIT_ENABLED and not self.ENABLE_REDIS:
-            raise ValueError(
-                "RATE_LIMIT_ENABLED requires ENABLE_REDIS=True"
-            )
-
-        if self.RATE_LIMIT_PER_MINUTE <= 0:
-            raise ValueError("RATE_LIMIT_PER_MINUTE must be > 0")
-
-        # -------------------------
-        # Mongo
-        # -------------------------
-
-        if self.ENABLE_MONGO:
-
-            if not self.MONGO_URI:
-                raise ValueError("MONGO_URI required")
-
-            if not self.MONGO_DB_NAME:
-                raise ValueError("MONGO_DB_NAME required")
-
-            if self.MONGO_MIN_POOL_SIZE > self.MONGO_MAX_POOL_SIZE:
-                raise ValueError(
-                    "MONGO_MIN_POOL_SIZE cannot exceed MONGO_MAX_POOL_SIZE"
-                )
-
-            if self.MONGO_SERVER_SELECTION_TIMEOUT_MS <= 0:
-                raise ValueError(
-                    "MONGO_SERVER_SELECTION_TIMEOUT_MS must be > 0"
-                )
-
-        # -------------------------
-        # Production safety
-        # -------------------------
-
-        if self.ENVIRONMENT == Environment.PRODUCTION:
-
-            if self.DEBUG:
-                raise ValueError("DEBUG must be False in production")
-
-            if self.DB_ECHO:
-                raise ValueError("DB_ECHO must be False in production")
+        self._validate_cors_configuration()
+        self._validate_proxy_configuration()
+        self._validate_production_configuration()
 
         return self
 
+    def _validate_database_pool_configuration(
+        self,
+    ) -> None:
+        """
+        Prevent unexpectedly large SQL connection pools per process.
 
-# =============================================================================
-# SETTINGS LOADER
-# =============================================================================
+        Raises:
+            ValueError: If the configured maximum exceeds the allowed limit.
+        """
+
+        maximum_connections = (
+            self.SQL_POOL_SIZE
+            + self.SQL_MAX_OVERFLOW
+        )
+
+        if maximum_connections > 200:
+            raise ValueError(
+                "SQL_POOL_SIZE plus SQL_MAX_OVERFLOW must not exceed "
+                "200 connections per process"
+            )
+
+    def _validate_mysql_configuration(
+        self,
+    ) -> None:
+        """
+        Validate MySQL configuration when MySQL is enabled.
+
+        Raises:
+            ValueError: If the URL is missing, invalid, or uses an unsupported
+                asynchronous driver.
+        """
+
+        if not self.ENABLE_MYSQL:
+            return
+
+        url = self._required_secret(
+            self.MYSQL_URL,
+            "MYSQL_URL",
+        )
+
+        self._validate_url_prefix(
+            value=url,
+            name="MYSQL_URL",
+            allowed_prefixes=(
+                "mysql+asyncmy://",
+                "mysql+aiomysql://",
+            ),
+            message=(
+                "MYSQL_URL must use mysql+asyncmy or mysql+aiomysql"
+            ),
+        )
+
+    # =========================================================================
+    # MICROSOFT SQL SERVER VALIDATION - COMMENTED REFERENCE
+    # =========================================================================
+    #
+    # def _validate_mssql_configuration(
+    #     self,
+    # ) -> None:
+    #     """Validate Microsoft SQL Server configuration when enabled."""
+    #
+    #     if not self.ENABLE_MSSQL:
+    #         return
+    #
+    #     url = self._required_secret(
+    #         self.MSSQL_URL,
+    #         "MSSQL_URL",
+    #     )
+    #
+    #     self._validate_url_prefix(
+    #         value=url,
+    #         name="MSSQL_URL",
+    #         allowed_prefixes=(
+    #             "mssql+aioodbc://",
+    #         ),
+    #         message=(
+    #             "MSSQL_URL must use the mssql+aioodbc driver"
+    #         ),
+    #     )
+
+    # =========================================================================
+    # POSTGRESQL VALIDATION - COMMENTED REFERENCE
+    # =========================================================================
+    #
+    # def _validate_postgres_configuration(
+    #     self,
+    # ) -> None:
+    #     """Validate PostgreSQL configuration when enabled."""
+    #
+    #     if not self.ENABLE_POSTGRES:
+    #         return
+    #
+    #     url = self._required_secret(
+    #         self.POSTGRES_URL,
+    #         "POSTGRES_URL",
+    #     )
+    #
+    #     self._validate_url_prefix(
+    #         value=url,
+    #         name="POSTGRES_URL",
+    #         allowed_prefixes=(
+    #             "postgresql+asyncpg://",
+    #         ),
+    #         message=(
+    #             "POSTGRES_URL must use the postgresql+asyncpg driver"
+    #         ),
+    #     )
+
+    # =========================================================================
+    # MONGODB VALIDATION - COMMENTED REFERENCE
+    # =========================================================================
+    #
+    # def _validate_mongo_configuration(
+    #     self,
+    # ) -> None:
+    #     """Validate MongoDB configuration when enabled."""
+    #
+    #     if self.MONGO_MIN_POOL_SIZE > self.MONGO_MAX_POOL_SIZE:
+    #         raise ValueError(
+    #             "MONGO_MIN_POOL_SIZE cannot exceed MONGO_MAX_POOL_SIZE"
+    #         )
+    #
+    #     if not self.ENABLE_MONGO:
+    #         return
+    #
+    #     uri = self._required_secret(
+    #         self.MONGO_URI,
+    #         "MONGO_URI",
+    #     )
+    #
+    #     self._validate_url_prefix(
+    #         value=uri,
+    #         name="MONGO_URI",
+    #         allowed_prefixes=(
+    #             "mongodb://",
+    #             "mongodb+srv://",
+    #         ),
+    #         message=(
+    #             "MONGO_URI must be a MongoDB connection URI"
+    #         ),
+    #     )
+    #
+    #     if not self.MONGO_DB_NAME:
+    #         raise ValueError(
+    #             "MONGO_DB_NAME is required when MongoDB is enabled"
+    #         )
+    #
+    #     supported_read_preferences = {
+    #         "primary",
+    #         "primaryPreferred",
+    #         "secondary",
+    #         "secondaryPreferred",
+    #         "nearest",
+    #     }
+    #
+    #     if (
+    #         self.MONGO_READ_PREFERENCE
+    #         not in supported_read_preferences
+    #     ):
+    #         raise ValueError(
+    #             "MONGO_READ_PREFERENCE contains an unsupported value"
+    #         )
+    #
+    #     if self.MONGO_WRITE_CONCERN not in {
+    #         "1",
+    #         "majority",
+    #     }:
+    #         raise ValueError(
+    #             "MONGO_WRITE_CONCERN must be '1' or 'majority'"
+    #         )
+
+    # =========================================================================
+    # REDIS VALIDATION - COMMENTED REFERENCE
+    # =========================================================================
+    #
+    # def _validate_redis_configuration(
+    #     self,
+    # ) -> None:
+    #     """Validate Redis configuration when enabled."""
+    #
+    #     if not self.ENABLE_REDIS:
+    #         return
+    #
+    #     url = self._required_secret(
+    #         self.REDIS_URL,
+    #         "REDIS_URL",
+    #     )
+    #
+    #     self._validate_url_prefix(
+    #         value=url,
+    #         name="REDIS_URL",
+    #         allowed_prefixes=(
+    #             "redis://",
+    #             "rediss://",
+    #         ),
+    #         message=(
+    #             "REDIS_URL must use redis:// or rediss://"
+    #         ),
+    #     )
+
+    # =========================================================================
+    # CELERY VALIDATION - COMMENTED REFERENCE
+    # =========================================================================
+    #
+    # def _validate_background_jobs_configuration(
+    #     self,
+    # ) -> None:
+    #     """Validate Celery configuration when background jobs are enabled."""
+    #
+    #     if not self.BACKGROUND_JOBS_ENABLED:
+    #         return
+    #
+    #     broker_url = self._required_secret(
+    #         self.CELERY_BROKER_URL,
+    #         "CELERY_BROKER_URL",
+    #     )
+    #
+    #     self._validate_celery_url(
+    #         value=broker_url,
+    #         name="CELERY_BROKER_URL",
+    #     )
+    #
+    #     result_backend = self.celery_result_backend_value
+    #
+    #     if result_backend is not None:
+    #         self._validate_celery_url(
+    #             value=result_backend,
+    #             name="CELERY_RESULT_BACKEND",
+    #         )
+    #
+    #     if (
+    #         self.CELERY_TASK_SOFT_TIME_LIMIT_SECONDS
+    #         >= self.CELERY_TASK_TIME_LIMIT_SECONDS
+    #     ):
+    #         raise ValueError(
+    #             "CELERY_TASK_SOFT_TIME_LIMIT_SECONDS must be lower than "
+    #             "CELERY_TASK_TIME_LIMIT_SECONDS"
+    #         )
+
+    def _validate_cors_configuration(
+        self,
+    ) -> None:
+        """
+        Reject unsafe wildcard and credential combinations.
+
+        Raises:
+            ValueError: If wildcard origins are combined with credentials.
+        """
+
+        if (
+            self.CORS_ALLOW_CREDENTIALS
+            and "*" in self.CORS_ALLOWED_ORIGINS
+        ):
+            raise ValueError(
+                "Wildcard CORS origins cannot be used with credentials"
+            )
+
+    def _validate_proxy_configuration(
+        self,
+    ) -> None:
+        """
+        Require explicit proxy addresses when proxy headers are trusted.
+
+        Raises:
+            ValueError: If proxy trust is enabled without configured proxies.
+        """
+
+        if (
+            self.TRUST_PROXY_HEADERS
+            and not self.trusted_proxy_ip_list
+        ):
+            raise ValueError(
+                "TRUSTED_PROXY_IPS is required when "
+                "TRUST_PROXY_HEADERS=true"
+            )
+
+    def _validate_production_configuration(
+        self,
+    ) -> None:
+        """
+        Enforce production safety requirements owned by this application.
+
+        Raises:
+            ValueError: If an unsafe production setting is detected.
+        """
+
+        if self.ENVIRONMENT != Environment.PRODUCTION:
+            return
+
+        if self.DEBUG:
+            raise ValueError(
+                "DEBUG must be false in production"
+            )
+
+        if self.SQL_ECHO:
+            raise ValueError(
+                "SQL_ECHO must be false in production"
+            )
+
+        if self.LOG_TO_FILE:
+            raise ValueError(
+                "LOG_TO_FILE should be false in production containers"
+            )
+
+        if not self.LOG_JSON:
+            raise ValueError(
+                "LOG_JSON must be true in production"
+            )
+
+        if not self.SECURE_HEADERS_ENABLED:
+            raise ValueError(
+                "SECURE_HEADERS_ENABLED must be true in production"
+            )
+
+        if "*" in self.CORS_ALLOWED_ORIGINS:
+            raise ValueError(
+                "Production CORS_ALLOWED_ORIGINS must not contain a wildcard"
+            )
+
+    # =========================================================================
+    # INTERNAL VALIDATION HELPERS
+    # =========================================================================
+
+    @staticmethod
+    def _required_secret(
+        value: SecretStr | None,
+        name: str,
+    ) -> str:
+        """
+        Return a required normalized secret value.
+
+        Args:
+            value: Optional secret setting.
+            name: Configuration field name.
+
+        Returns:
+            Unwrapped and stripped secret value.
+
+        Raises:
+            ValueError: If the value is missing or blank.
+        """
+
+        if value is None:
+            raise ValueError(
+                f"{name} is required when its integration is enabled"
+            )
+
+        secret = value.get_secret_value().strip()
+
+        if not secret:
+            raise ValueError(
+                f"{name} is required when its integration is enabled"
+            )
+
+        return secret
+
+    @staticmethod
+    def _validate_url_prefix(
+        *,
+        value: str,
+        name: str,
+        allowed_prefixes: tuple[str, ...],
+        message: str,
+    ) -> None:
+        """
+        Validate a connection URL and its driver prefix.
+
+        Args:
+            value: Connection URL.
+            name: Configuration field name.
+            allowed_prefixes: Accepted connection prefixes.
+            message: Validation message for an unsupported prefix.
+
+        Raises:
+            ValueError: If the prefix or URL structure is invalid.
+        """
+
+        if not value.startswith(allowed_prefixes):
+            raise ValueError(message)
+
+        parsed = urlparse(value)
+
+        if not parsed.scheme or not parsed.netloc:
+            raise ValueError(
+                f"{name} must be a valid connection URL"
+            )
+
+    # -------------------------------------------------------------------------
+    # CELERY URL HELPER - COMMENTED REFERENCE
+    # -------------------------------------------------------------------------
+    #
+    # @staticmethod
+    # def _validate_celery_url(
+    #     *,
+    #     value: str,
+    #     name: str,
+    # ) -> None:
+    #     """Validate a supported Celery broker or result-backend URL."""
+    #
+    #     supported_prefixes = (
+    #         "redis://",
+    #         "rediss://",
+    #         "amqp://",
+    #         "amqps://",
+    #     )
+    #
+    #     if not value.startswith(supported_prefixes):
+    #         raise ValueError(
+    #             f"{name} must use Redis or AMQP"
+    #         )
+    #
+    #     parsed = urlparse(value)
+    #
+    #     if not parsed.scheme or not parsed.netloc:
+    #         raise ValueError(
+    #             f"{name} must be a valid connection URL"
+    #         )
+
+    @staticmethod
+    def _optional_secret_value(
+        value: SecretStr | None,
+    ) -> str | None:
+        """
+        Return an unwrapped optional secret value.
+
+        Args:
+            value: Optional secret.
+
+        Returns:
+            Normalized secret or ``None``.
+        """
+
+        if value is None:
+            return None
+
+        normalized = value.get_secret_value().strip()
+
+        return normalized or None
+
+    # =========================================================================
+    # DERIVED PROPERTIES
+    # =========================================================================
+
+    @property
+    def log_directory(
+        self,
+    ) -> Path:
+        """
+        Return the absolute log directory without creating it.
+
+        Returns:
+            Absolute log directory.
+        """
+
+        if self.LOG_DIR.is_absolute():
+            return self.LOG_DIR
+
+        return self.BASE_DIR / self.LOG_DIR
+
+    @property
+    def trusted_proxy_ip_list(
+        self,
+    ) -> tuple[str, ...]:
+        """
+        Return normalized trusted proxy addresses or network ranges.
+
+        Returns:
+            Deduplicated trusted proxy values.
+        """
+
+        values = (
+            item.strip()
+            for item in self.TRUSTED_PROXY_IPS.split(",")
+        )
+
+        return tuple(
+            dict.fromkeys(
+                item
+                for item in values
+                if item
+            )
+        )
+
+    @property
+    def enabled_database_names(
+        self,
+    ) -> tuple[str, ...]:
+        """
+        Return names of active database integrations.
+
+        MySQL is currently the only active database integration.
+
+        Returns:
+            Enabled database names.
+        """
+
+        enabled: list[str] = []
+
+        if self.ENABLE_MYSQL:
+            enabled.append("mysql")
+
+        # ---------------------------------------------------------------------
+        # Uncomment alongside the corresponding settings, adapter, registry,
+        # and API dependency blocks.
+        # ---------------------------------------------------------------------
+        # if self.ENABLE_MSSQL:
+        #     enabled.append("mssql")
+        #
+        # if self.ENABLE_POSTGRES:
+        #     enabled.append("postgres")
+        #
+        # if self.ENABLE_MONGO:
+        #     enabled.append("mongo")
+        #
+        # if self.ENABLE_REDIS:
+        #     enabled.append("redis")
+
+        return tuple(enabled)
+
+    @property
+    def mysql_url_value(
+        self,
+    ) -> str | None:
+        """
+        Return the unwrapped MySQL connection URL.
+
+        Returns:
+            MySQL connection URL or ``None``.
+        """
+
+        return self._optional_secret_value(
+            self.MYSQL_URL
+        )
+
+    # =========================================================================
+    # MICROSOFT SQL SERVER PROPERTY - COMMENTED REFERENCE
+    # =========================================================================
+    #
+    # @property
+    # def mssql_url_value(
+    #     self,
+    # ) -> str | None:
+    #     """Return the unwrapped SQL Server connection URL."""
+    #
+    #     return self._optional_secret_value(
+    #         self.MSSQL_URL
+    #     )
+
+    # =========================================================================
+    # POSTGRESQL PROPERTY - COMMENTED REFERENCE
+    # =========================================================================
+    #
+    # @property
+    # def postgres_url_value(
+    #     self,
+    # ) -> str | None:
+    #     """Return the unwrapped PostgreSQL connection URL."""
+    #
+    #     return self._optional_secret_value(
+    #         self.POSTGRES_URL
+    #     )
+
+    # =========================================================================
+    # MONGODB PROPERTY - COMMENTED REFERENCE
+    # =========================================================================
+    #
+    # @property
+    # def mongo_uri_value(
+    #     self,
+    # ) -> str | None:
+    #     """Return the unwrapped MongoDB connection URI."""
+    #
+    #     return self._optional_secret_value(
+    #         self.MONGO_URI
+    #     )
+
+    # =========================================================================
+    # REDIS PROPERTY - COMMENTED REFERENCE
+    # =========================================================================
+    #
+    # @property
+    # def redis_url_value(
+    #     self,
+    # ) -> str | None:
+    #     """Return the unwrapped Redis connection URL."""
+    #
+    #     return self._optional_secret_value(
+    #         self.REDIS_URL
+    #     )
+
+    # =========================================================================
+    # CELERY PROPERTIES - COMMENTED REFERENCE
+    # =========================================================================
+    #
+    # @property
+    # def celery_broker_url_value(
+    #     self,
+    # ) -> str | None:
+    #     """Return the unwrapped Celery broker URL."""
+    #
+    #     return self._optional_secret_value(
+    #         self.CELERY_BROKER_URL
+    #     )
+    #
+    #
+    # @property
+    # def celery_result_backend_value(
+    #     self,
+    # ) -> str | None:
+    #     """Return the unwrapped Celery result-backend URL."""
+    #
+    #     return self._optional_secret_value(
+    #         self.CELERY_RESULT_BACKEND
+    #     )
 
 
-@lru_cache
+@lru_cache(maxsize=1)
 def get_settings() -> AppSettings:
     """
-    Load application configuration.
+    Return cached and validated process configuration.
 
-    Characteristics:
+    Application code should use this function instead of constructing
+    ``AppSettings`` repeatedly.
 
-        - deterministic
-        - thread-safe
-        - cached
+    Returns:
+        Cached immutable settings.
     """
 
-    settings = AppSettings()
+    return AppSettings()
 
-    log_dir = (
-        settings.LOG_DIR
-        if settings.LOG_DIR.is_absolute()
-        else settings.BASE_DIR / settings.LOG_DIR
-    )
 
-    log_dir.mkdir(parents=True, exist_ok=True)
+def clear_settings_cache() -> None:
+    """
+    Clear the cached settings object.
 
-    return settings
+    This helper is intended for tests that temporarily replace environment
+    configuration.
+    """
+
+    get_settings.cache_clear()
+
+
+__all__ = [
+    "AppSettings",
+    "Environment",
+    "clear_settings_cache",
+    "get_settings",
+]

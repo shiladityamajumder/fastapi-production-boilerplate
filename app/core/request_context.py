@@ -1,160 +1,306 @@
-# File: app/core/request_context.py
 """
-===============================================================================
-REQUEST CONTEXT MANAGEMENT (ASYNC + THREAD SAFE)
-===============================================================================
+File: app/core/request_context.py
 
-Provides request-scoped execution context using Python `contextvars`.
+Request- and task-scoped observability context based on ``contextvars``.
 
-Primary responsibility:
+The same context implementation can be used by:
 
-    - Store and retrieve request_id safely across async boundaries
-    - Guarantee isolation across concurrent requests
-    - Prevent cross-request contamination
+- FastAPI request middleware,
+- Celery task lifecycle hooks,
+- internal asynchronous jobs,
+- integration clients,
+- repositories and services.
 
--------------------------------------------------------------------------------
-ARCHITECTURAL BOUNDARY
--------------------------------------------------------------------------------
-
-This module:
-
-    - Has NO FastAPI dependency
-    - Has NO middleware dependency
-    - Owns NO infrastructure resources
-    - Contains NO business logic
-    - Is framework-agnostic
-
-It provides pure execution-context state management.
-
--------------------------------------------------------------------------------
-WHY CONTEXTVARS
--------------------------------------------------------------------------------
-
-`contextvars` provides:
-
-    - Async safety (coroutine isolation)
-    - Thread safety
-    - Per-task logical context separation
-    - Compatibility with async/await execution model
-
-Unlike global variables:
-
-    - Values do NOT leak across coroutines
-    - Each request runs in its own logical execution context
-
--------------------------------------------------------------------------------
-IMPORTANT EXECUTION RULE
--------------------------------------------------------------------------------
-
-Middleware MUST:
-
-    1. Capture the token from set_request_id()
-    2. Reset it in a finally block
-
-Example:
-
-    token = set_request_id("req_123")
-    try:
-        await next_layer()
-    finally:
-        reset_request_id(token)
-
-This guarantees:
-
-    - No cross-request leakage
-    - No context bleed in background tasks
-    - Deterministic lifecycle
-
--------------------------------------------------------------------------------
-FAILURE SEMANTICS
--------------------------------------------------------------------------------
-
-- get_request_id() always returns a string
-- If not set → returns provided default
-- set_request_id() rejects empty values
-- reset_request_id() must be passed valid Token
+Context values are isolated across asynchronous execution flows and must always
+be reset using the tokens returned by the corresponding setter.
 """
 
 from __future__ import annotations
 
-import contextvars
-from contextvars import Token
-from typing import Optional
+from contextvars import (
+    ContextVar,
+    Token,
+)
+from dataclasses import dataclass
 
 
-# =============================================================================
-# CONTEXT VARIABLE
-# =============================================================================
-
-_request_id_ctx: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar(
+_request_id: ContextVar[str | None] = ContextVar(
     "request_id",
     default=None,
 )
 
+_correlation_id: ContextVar[str | None] = ContextVar(
+    "correlation_id",
+    default=None,
+)
 
-# =============================================================================
-# PUBLIC API
-# =============================================================================
+_trace_id: ContextVar[str | None] = ContextVar(
+    "trace_id",
+    default=None,
+)
+
+_task_id: ContextVar[str | None] = ContextVar(
+    "task_id",
+    default=None,
+)
+
+_api_version: ContextVar[str] = ContextVar(
+    "api_version",
+    default="v1",
+)
 
 
-def set_request_id(request_id: str) -> Token:
+@dataclass(
+    frozen=True,
+    slots=True,
+)
+class RequestContextTokens:
     """
-    Set request ID in current execution context.
+    Tokens required to restore the previous execution context.
+
+    Context variables must be reset in reverse assignment order to safely
+    restore any parent request or task context.
+    """
+
+    request_id: Token[str | None]
+    correlation_id: Token[str | None]
+    trace_id: Token[str | None]
+    task_id: Token[str | None]
+    api_version: Token[str]
+
+
+def _normalize_required_identifier(
+    value: str,
+    name: str,
+) -> str:
+    """
+    Normalize and validate a required context identifier.
 
     Args:
-        request_id:
-            Non-empty correlation identifier.
+        value: Raw identifier value.
+        name: Setting name used in validation errors.
 
     Returns:
-        Token required for safe reset.
+        Normalized identifier.
 
     Raises:
-        ValueError if request_id is empty.
-
-    Production invariant:
-        Always reset using the returned token.
+        ValueError: If the identifier is blank.
     """
 
-    if not request_id:
-        raise ValueError("request_id must be non-empty")
+    normalized = value.strip()
 
-    return _request_id_ctx.set(request_id)
+    if not normalized:
+        raise ValueError(
+            f"{name} must be non-empty"
+        )
+
+    return normalized
 
 
-def get_request_id(default: str = "N/A") -> str:
+def _normalize_optional_identifier(
+    value: str | None,
+) -> str | None:
+    """Normalize an optional context identifier."""
+
+    if value is None:
+        return None
+
+    normalized = value.strip()
+    return normalized or None
+
+
+def set_request_context(
+    *,
+    request_id: str,
+    correlation_id: str,
+    trace_id: str | None,
+    api_version: str,
+    task_id: str | None = None,
+) -> RequestContextTokens:
     """
-    Retrieve request ID from current execution context.
+    Bind request or task metadata to the current asynchronous context.
 
     Args:
-        default:
-            Value returned if no request_id has been set.
+        request_id: Identifier for the current HTTP request or task execution.
+        correlation_id: Identifier propagated across service boundaries.
+        trace_id: Optional distributed-tracing identifier.
+        api_version: API version associated with the execution.
+        task_id: Optional Celery task identifier.
 
     Returns:
-        Current request_id or default.
-
-    Guarantees:
-        - Never raises
-        - Always returns string
+        Tokens required to restore the previous context.
     """
 
-    value = _request_id_ctx.get()
-    return value if value is not None else default
+    normalized_request_id = _normalize_required_identifier(
+        request_id,
+        "request_id",
+    )
+
+    normalized_correlation_id = _normalize_required_identifier(
+        correlation_id,
+        "correlation_id",
+    )
+
+    normalized_api_version = (
+        api_version.strip().strip("/")
+        or "v1"
+    )
+
+    return RequestContextTokens(
+        request_id=_request_id.set(
+            normalized_request_id,
+        ),
+        correlation_id=_correlation_id.set(
+            normalized_correlation_id,
+        ),
+        trace_id=_trace_id.set(
+            _normalize_optional_identifier(trace_id),
+        ),
+        task_id=_task_id.set(
+            _normalize_optional_identifier(task_id),
+        ),
+        api_version=_api_version.set(
+            normalized_api_version,
+        ),
+    )
 
 
-def reset_request_id(token: Token) -> None:
+def reset_request_context(
+    tokens: RequestContextTokens,
+) -> None:
     """
-    Reset request ID to previous state using token.
+    Restore every context variable to its previous value.
 
-    Required for:
-
-        - Middleware cleanup
-        - Manual context overrides
-        - Background task simulations
-        - Unit tests
-
-    Raises:
-        RuntimeError if invalid token is provided
-        (standard contextvars behavior).
+    Args:
+        tokens: Tokens returned by ``set_request_context``.
     """
 
-    _request_id_ctx.reset(token)
+    _api_version.reset(tokens.api_version)
+    _task_id.reset(tokens.task_id)
+    _trace_id.reset(tokens.trace_id)
+    _correlation_id.reset(tokens.correlation_id)
+    _request_id.reset(tokens.request_id)
+
+
+def set_request_id(
+    request_id: str,
+) -> Token[str | None]:
+    """
+    Set only the request identifier.
+
+    This helper is retained for narrow compatibility cases. New request or
+    Celery lifecycle code should normally use ``set_request_context``.
+    """
+
+    normalized = _normalize_required_identifier(
+        request_id,
+        "request_id",
+    )
+
+    return _request_id.set(normalized)
+
+
+def reset_request_id(
+    token: Token[str | None],
+) -> None:
+    """Reset a token returned by ``set_request_id``."""
+
+    _request_id.reset(token)
+
+
+def set_correlation_id(
+    correlation_id: str,
+) -> Token[str | None]:
+    """Set only the cross-service correlation identifier."""
+
+    normalized = _normalize_required_identifier(
+        correlation_id,
+        "correlation_id",
+    )
+
+    return _correlation_id.set(normalized)
+
+
+def reset_correlation_id(
+    token: Token[str | None],
+) -> None:
+    """Reset a token returned by ``set_correlation_id``."""
+
+    _correlation_id.reset(token)
+
+
+def set_task_id(
+    task_id: str,
+) -> Token[str | None]:
+    """Set the current Celery or background-task identifier."""
+
+    normalized = _normalize_required_identifier(
+        task_id,
+        "task_id",
+    )
+
+    return _task_id.set(normalized)
+
+
+def reset_task_id(
+    token: Token[str | None],
+) -> None:
+    """Reset a token returned by ``set_task_id``."""
+
+    _task_id.reset(token)
+
+
+def get_request_id(
+    default: str | None = None,
+) -> str | None:
+    """Return the current request identifier."""
+
+    return _request_id.get() or default
+
+
+def get_correlation_id(
+    default: str | None = None,
+) -> str | None:
+    """Return the current cross-service correlation identifier."""
+
+    return _correlation_id.get() or default
+
+
+def get_trace_id(
+    default: str | None = None,
+) -> str | None:
+    """Return the current distributed-tracing identifier."""
+
+    return _trace_id.get() or default
+
+
+def get_task_id(
+    default: str | None = None,
+) -> str | None:
+    """Return the current Celery or background-task identifier."""
+
+    return _task_id.get() or default
+
+
+def get_api_version() -> str:
+    """Return the API version associated with the current execution."""
+
+    return _api_version.get()
+
+
+__all__ = [
+    "RequestContextTokens",
+    "get_api_version",
+    "get_correlation_id",
+    "get_request_id",
+    "get_task_id",
+    "get_trace_id",
+    "reset_correlation_id",
+    "reset_request_context",
+    "reset_request_id",
+    "reset_task_id",
+    "set_correlation_id",
+    "set_request_context",
+    "set_request_id",
+    "set_task_id",
+]

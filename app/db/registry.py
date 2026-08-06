@@ -1,231 +1,609 @@
-# File: app/db/registry.py
 """
-===============================================================================
-DATABASE REGISTRY (INFRASTRUCTURE RESOURCE MANAGER)
-===============================================================================
+File: app/db/registry.py
 
-Central registry responsible for managing all infrastructure adapters used
-by the application.
+Lifecycle registry for configured database and cache adapters.
 
-This component provides a single, structured entry point for accessing
-external infrastructure resources such as:
+Current active integration:
 
-    • PostgreSQL
-    • MySQL
-    • MSSQL
-    • MongoDB
-    • Redis
+- MySQL
 
--------------------------------------------------------------------------------
-ARCHITECTURAL ROLE
--------------------------------------------------------------------------------
+Reference implementations retained as commented code:
 
-This module belongs to the Infrastructure Layer.
+- Microsoft SQL Server
+- PostgreSQL
+- MongoDB
+- Redis
 
-Responsibilities:
+To enable another integration, uncomment every block for that integration in
+this file and complete the related activation steps documented beside its
+import.
 
-    • Store initialized infrastructure adapters
-    • Provide centralized runtime access
-    • Validate connectivity during application startup
-    • Ensure graceful shutdown of all resources
-
-This module is NOT responsible for:
-
-    • Dependency injection
-    • Business logic
-    • Transaction management
-    • HTTP concerns
-    • Repository behavior
-
--------------------------------------------------------------------------------
-WHY A REGISTRY EXISTS
--------------------------------------------------------------------------------
-
-Without a registry, infrastructure resources would typically be stored
-individually in FastAPI state:
-
-    app.state.postgres
-    app.state.mongo
-    app.state.redis
-
-As the system grows this quickly becomes difficult to maintain.
-
-The registry provides a unified interface:
-
-    app.state.db.postgres
-    app.state.db.mongo
-    app.state.db.redis
-
-This improves:
-
-    • discoverability
-    • maintainability
-    • testability
-    • architectural clarity
-
--------------------------------------------------------------------------------
-LIFECYCLE CONTRACT
--------------------------------------------------------------------------------
-
-Application Startup
-
-    registry = DatabaseRegistry(...)
-    await registry.ping_all()
-
-Application Runtime
-
-    request.app.state.db.<adapter>
-
-Application Shutdown
-
-    await registry.close()
-
--------------------------------------------------------------------------------
-FAILURE POLICY
--------------------------------------------------------------------------------
-
-If ANY enabled infrastructure adapter fails its connectivity check:
-
-    → Application startup MUST abort.
-
-The system intentionally fails fast to avoid partial system operation.
+FastAPI and Celery worker processes must each create their own registry.
+Database engines, clients, and connection pools must never be shared across
+operating-system processes.
 """
 
 from __future__ import annotations
 
-from typing import Optional
+import asyncio
+import time
+from collections.abc import Mapping
+from dataclasses import dataclass
+from types import MappingProxyType
+from typing import Protocol, runtime_checkable
 
+from app.common.exceptions import (
+    InfrastructureUnavailableError,
+)
+from app.core.config import AppSettings
 from app.core.logging import get_logger
-from app.infrastructure.postgres import PostgresDatabase
-from app.infrastructure.mysql import MySQLDatabase
-from app.infrastructure.mssql import MSSQLDatabase
-from app.infrastructure.mongo import MongoDatabase
-from app.infrastructure.redis_client import RedisClient
-
-
-logger = get_logger("db_registry")
+from app.db.mysql import MySQLDatabase
 
 
 # =============================================================================
-# DATABASE REGISTRY
+# OPTIONAL DATABASE AND CACHE IMPORTS
 # =============================================================================
+#
+# MySQL is currently the only active database integration.
+#
+# To activate another integration:
+#
+# 1. Uncomment its import below.
+# 2. Uncomment its constructor argument and instance attribute.
+# 3. Uncomment its ``from_settings`` initialization block.
+# 4. Uncomment its registration inside the ``adapters`` property.
+# 5. Uncomment its settings in ``app/core/config.py``.
+# 6. Uncomment its API dependencies.
+# 7. Install its required Python package or database driver.
+# 8. Add its connection settings to the environment configuration.
+#
+# Multiple integrations may be enabled by uncommenting their complete blocks
+# together.
+# =============================================================================
+
+
+# -----------------------------------------------------------------------------
+# MICROSOFT SQL SERVER SUPPORT
+#
+# Related files:
+#     app/db/mssql.py
+#     app/core/config.py
+#     app/api/dependencies.py or app/api/dependencies/mssql.py
+#
+# Required packages:
+#     aioodbc
+#     pyodbc
+#
+# Required environment configuration:
+#     ENABLE_MSSQL=true
+#     MSSQL_URL=...
+# -----------------------------------------------------------------------------
+# from app.db.mssql import MSSQLDatabase
+
+
+# -----------------------------------------------------------------------------
+# POSTGRESQL SUPPORT
+#
+# Related files:
+#     app/db/postgres.py
+#     app/core/config.py
+#     app/api/dependencies.py or app/api/dependencies/postgres.py
+#
+# Required package:
+#     asyncpg
+#
+# Required environment configuration:
+#     ENABLE_POSTGRES=true
+#     POSTGRES_URL=...
+# -----------------------------------------------------------------------------
+# from app.db.postgres import PostgreSQLDatabase
+
+
+# -----------------------------------------------------------------------------
+# MONGODB SUPPORT
+#
+# Related files:
+#     app/db/mongo.py
+#     app/core/config.py
+#     app/api/dependencies.py or app/api/dependencies/mongo.py
+#
+# Required package:
+#     pymongo
+#
+# Required environment configuration:
+#     ENABLE_MONGO=true
+#     MONGO_URI=...
+#     MONGO_DB_NAME=...
+# -----------------------------------------------------------------------------
+# from app.db.mongo import MongoDatabase
+
+
+# -----------------------------------------------------------------------------
+# REDIS SUPPORT
+#
+# Related files:
+#     app/db/redis_client.py
+#     app/core/config.py
+#     app/api/dependencies.py or app/api/dependencies/redis.py
+#
+# Required package:
+#     redis
+#
+# Required environment configuration:
+#     ENABLE_REDIS=true
+#     REDIS_URL=...
+#
+# Application Redis is independent of the Celery broker. Celery may use Redis
+# as its broker without enabling this application Redis adapter.
+# -----------------------------------------------------------------------------
+# from app.db.redis_client import RedisClient
+
+
+logger = get_logger(__name__)
+
+
+@runtime_checkable
+class InfrastructureAdapter(Protocol):
+    """
+    Minimal lifecycle contract implemented by infrastructure adapters.
+
+    Every active adapter owns its engine, client, or connection pool and must
+    validate and release those resources through this contract.
+    """
+
+    async def ping(self) -> None:
+        """
+        Validate dependency connectivity.
+
+        Raises:
+            Exception: If the dependency cannot be reached.
+        """
+
+        ...
+
+    async def close(self) -> None:
+        """Release resources owned by the adapter."""
+
+        ...
+
+
+@dataclass(
+    frozen=True,
+    slots=True,
+)
+class HealthStatus:
+    """
+    Sanitized health result for an active infrastructure adapter.
+
+    Attributes:
+        healthy: Whether the adapter responded successfully.
+        duration_ms: Health-check duration in milliseconds.
+    """
+
+    healthy: bool
+    duration_ms: float
 
 
 class DatabaseRegistry:
     """
-    Central container for all infrastructure adapters.
+    Own infrastructure adapters configured for the current process.
 
-    This class acts as the single access point for infrastructure resources
-    during application runtime.
+    MySQL is currently active. Other adapter implementations remain in this
+    file as commented reference blocks and create no imports, clients, engines,
+    pools, startup checks, or shutdown work.
 
-    Each adapter is optional and only present when enabled in configuration.
-
-    Example runtime access:
-
-        db = request.app.state.db
-        session = db.postgres
-        cache = db.redis
+    Each FastAPI process and Celery worker child must construct its own
+    ``DatabaseRegistry``.
     """
 
     def __init__(
         self,
         *,
-        postgres: Optional[PostgresDatabase] = None,
-        mysql: Optional[MySQLDatabase] = None,
-        mssql: Optional[MSSQLDatabase] = None,
-        mongo: Optional[MongoDatabase] = None,
-        redis: Optional[RedisClient] = None,
+        mysql: MySQLDatabase | None = None,
+
+        # ---------------------------------------------------------------------
+        # MICROSOFT SQL SERVER
+        #
+        # Uncomment together with the MSSQL import and all MSSQL blocks below.
+        # ---------------------------------------------------------------------
+        # mssql: MSSQLDatabase | None = None,
+
+        # ---------------------------------------------------------------------
+        # POSTGRESQL
+        #
+        # Uncomment together with the PostgreSQL import and all PostgreSQL
+        # blocks below.
+        # ---------------------------------------------------------------------
+        # postgres: PostgreSQLDatabase | None = None,
+
+        # ---------------------------------------------------------------------
+        # MONGODB
+        #
+        # Uncomment together with the MongoDB import and all MongoDB blocks
+        # below.
+        # ---------------------------------------------------------------------
+        # mongo: MongoDatabase | None = None,
+
+        # ---------------------------------------------------------------------
+        # REDIS
+        #
+        # Uncomment together with the Redis import and all Redis blocks below.
+        # ---------------------------------------------------------------------
+        # redis: RedisClient | None = None,
     ) -> None:
         """
-        Initialize registry with infrastructure adapters.
-
-        Adapters are injected during application startup.
+        Initialize the infrastructure registry.
 
         Args:
-            postgres: PostgreSQL adapter
-            mysql: MySQL adapter
-            mssql: MSSQL adapter
-            mongo: MongoDB adapter
-            redis: Redis adapter
+            mysql: Optional active MySQL adapter.
+
+        Optional constructor arguments for MSSQL, PostgreSQL, MongoDB, and Redis
+        are retained as commented reference blocks.
         """
 
-        self.postgres = postgres
         self.mysql = mysql
-        self.mssql = mssql
-        self.mongo = mongo
-        self.redis = redis
 
-    # =========================================================================
-    # STARTUP HEALTH CHECK
-    # =========================================================================
+        # ---------------------------------------------------------------------
+        # MICROSOFT SQL SERVER
+        # ---------------------------------------------------------------------
+        # self.mssql = mssql
 
-    async def ping_all(self) -> None:
+        # ---------------------------------------------------------------------
+        # POSTGRESQL
+        # ---------------------------------------------------------------------
+        # self.postgres = postgres
+
+        # ---------------------------------------------------------------------
+        # MONGODB
+        # ---------------------------------------------------------------------
+        # self.mongo = mongo
+
+        # ---------------------------------------------------------------------
+        # REDIS
+        # ---------------------------------------------------------------------
+        # self.redis = redis
+
+    @classmethod
+    def from_settings(
+        cls,
+        settings: AppSettings,
+    ) -> DatabaseRegistry:
         """
-        Validate connectivity for all enabled infrastructure resources.
+        Construct active infrastructure adapters from configuration.
 
-        This method is executed during application startup.
+        MySQL is currently the only active integration.
 
-        Each adapter performs its own connectivity check.
+        Args:
+            settings: Validated application settings.
 
-        If any adapter fails, startup must abort to prevent the application
-        from running in a partially functional state.
+        Returns:
+            Registry containing the configured MySQL adapter, or an empty
+            registry when MySQL is disabled.
+
+        Raises:
+            RuntimeError: If MySQL is enabled but incompletely configured.
         """
 
-        logger.info("Validating infrastructure connectivity")
+        return cls(
+            mysql=(
+                MySQLDatabase.from_settings(settings)
+                if settings.ENABLE_MYSQL
+                else None
+            ),
 
-        if self.postgres:
-            await self.postgres.ping()
+            # -----------------------------------------------------------------
+            # MICROSOFT SQL SERVER
+            #
+            # Activation requirements:
+            #     - Uncomment the MSSQL import.
+            #     - Uncomment the MSSQL constructor argument and attribute.
+            #     - Uncomment this block.
+            #     - Uncomment ENABLE_MSSQL and MSSQL settings in config.py.
+            #     - Install aioodbc and pyodbc.
+            # -----------------------------------------------------------------
+            # mssql=(
+            #     MSSQLDatabase.from_settings(settings)
+            #     if settings.ENABLE_MSSQL
+            #     else None
+            # ),
 
-        if self.mongo:
-            await self.mongo.ping()
+            # -----------------------------------------------------------------
+            # POSTGRESQL
+            #
+            # Activation requirements:
+            #     - Uncomment the PostgreSQL import.
+            #     - Uncomment the PostgreSQL constructor argument and attribute.
+            #     - Uncomment this block.
+            #     - Uncomment ENABLE_POSTGRES and related settings in config.py.
+            #     - Install asyncpg.
+            # -----------------------------------------------------------------
+            # postgres=(
+            #     PostgreSQLDatabase.from_settings(settings)
+            #     if settings.ENABLE_POSTGRES
+            #     else None
+            # ),
 
-        if self.redis:
-            await self.redis.ping()
+            # -----------------------------------------------------------------
+            # MONGODB
+            #
+            # Activation requirements:
+            #     - Uncomment the MongoDB import.
+            #     - Uncomment the MongoDB constructor argument and attribute.
+            #     - Uncomment this block.
+            #     - Uncomment ENABLE_MONGO and related settings in config.py.
+            #     - Install pymongo.
+            # -----------------------------------------------------------------
+            # mongo=(
+            #     MongoDatabase.from_settings(settings)
+            #     if settings.ENABLE_MONGO
+            #     else None
+            # ),
 
-        if self.mysql:
-            await self.mysql.ping()
+            # -----------------------------------------------------------------
+            # REDIS
+            #
+            # Activation requirements:
+            #     - Uncomment the Redis import.
+            #     - Uncomment the Redis constructor argument and attribute.
+            #     - Uncomment this block.
+            #     - Uncomment ENABLE_REDIS and related settings in config.py.
+            #     - Install redis.
+            # -----------------------------------------------------------------
+            # redis=(
+            #     RedisClient.from_settings(settings)
+            #     if settings.ENABLE_REDIS
+            #     else None
+            # ),
+        )
 
-        if self.mssql:
-            await self.mssql.ping()
+    @property
+    def adapters(
+        self,
+    ) -> Mapping[str, InfrastructureAdapter]:
+        """
+        Return active adapters in deterministic lifecycle order.
 
-        logger.info("All infrastructure connectivity checks passed")
+        Only active, initialized adapters are included. Health checks and
+        shutdown operations use this mapping, so commented integrations are
+        ignored completely.
 
-    # =========================================================================
-    # SHUTDOWN
-    # =========================================================================
+        Returns:
+            Read-only mapping of adapter names to instances.
+        """
+
+        configured: dict[
+            str,
+            InfrastructureAdapter,
+        ] = {}
+
+        if self.mysql is not None:
+            configured["mysql"] = self.mysql
+
+        # ---------------------------------------------------------------------
+        # MICROSOFT SQL SERVER
+        #
+        # Uncomment together with all other MSSQL blocks.
+        # ---------------------------------------------------------------------
+        # if self.mssql is not None:
+        #     configured["mssql"] = self.mssql
+
+        # ---------------------------------------------------------------------
+        # POSTGRESQL
+        #
+        # Uncomment together with all other PostgreSQL blocks.
+        # ---------------------------------------------------------------------
+        # if self.postgres is not None:
+        #     configured["postgres"] = self.postgres
+
+        # ---------------------------------------------------------------------
+        # MONGODB
+        #
+        # Uncomment together with all other MongoDB blocks.
+        # ---------------------------------------------------------------------
+        # if self.mongo is not None:
+        #     configured["mongo"] = self.mongo
+
+        # ---------------------------------------------------------------------
+        # REDIS
+        #
+        # Uncomment together with all other Redis blocks.
+        # ---------------------------------------------------------------------
+        # if self.redis is not None:
+        #     configured["redis"] = self.redis
+
+        return MappingProxyType(
+            configured
+        )
+
+    @property
+    def adapter_names(
+        self,
+    ) -> tuple[str, ...]:
+        """
+        Return active adapter names.
+
+        Returns:
+            Adapter names in lifecycle order.
+        """
+
+        return tuple(
+            self.adapters
+        )
+
+    async def check_all(
+        self,
+        *,
+        timeout_seconds: float,
+    ) -> dict[str, HealthStatus]:
+        """
+        Check all active dependencies concurrently.
+
+        Each active adapter receives an independent timeout. Disabled or
+        commented integrations are not imported, initialized, or checked.
+
+        Failures are logged internally with stack traces but returned as
+        sanitized health results.
+
+        Args:
+            timeout_seconds: Maximum duration allowed for each adapter check.
+
+        Returns:
+            Health results indexed by active adapter name.
+
+        Raises:
+            ValueError: If ``timeout_seconds`` is not positive.
+        """
+
+        if timeout_seconds <= 0:
+            raise ValueError(
+                "timeout_seconds must be greater than zero"
+            )
+
+        async def check_adapter(
+            name: str,
+            adapter: InfrastructureAdapter,
+        ) -> tuple[str, HealthStatus]:
+            """
+            Check one active adapter.
+
+            Args:
+                name: Registered adapter name.
+                adapter: Active infrastructure adapter.
+
+            Returns:
+                Adapter name and sanitized health result.
+            """
+
+            started_at = time.perf_counter()
+            healthy = True
+
+            try:
+                async with asyncio.timeout(
+                    timeout_seconds
+                ):
+                    await adapter.ping()
+
+            except Exception:
+                healthy = False
+
+                logger.warning(
+                    "Infrastructure health check failed",
+                    extra={
+                        "adapter": name,
+                    },
+                    exc_info=True,
+                )
+
+            duration_ms = round(
+                (
+                    time.perf_counter()
+                    - started_at
+                )
+                * 1_000,
+                2,
+            )
+
+            return (
+                name,
+                HealthStatus(
+                    healthy=healthy,
+                    duration_ms=duration_ms,
+                ),
+            )
+
+        configured_adapters = self.adapters
+
+        if not configured_adapters:
+            return {}
+
+        results = await asyncio.gather(
+            *(
+                check_adapter(
+                    name,
+                    adapter,
+                )
+                for name, adapter
+                in configured_adapters.items()
+            )
+        )
+
+        return dict(
+            results
+        )
+
+    async def ping_all(
+        self,
+        *,
+        timeout_seconds: float,
+    ) -> None:
+        """
+        Validate every active dependency during process startup.
+
+        A process must not report ready when an active dependency is
+        unavailable. Commented integrations do not participate in startup
+        validation.
+
+        Args:
+            timeout_seconds: Maximum duration allowed for each adapter check.
+
+        Raises:
+            ValueError: If ``timeout_seconds`` is not positive.
+            InfrastructureUnavailableError: If one or more active adapters
+                fail.
+        """
+
+        checks = await self.check_all(
+            timeout_seconds=timeout_seconds,
+        )
+
+        unavailable = [
+            name
+            for name, result in checks.items()
+            if not result.healthy
+        ]
+
+        if unavailable:
+            raise InfrastructureUnavailableError(
+                message=(
+                    "Required infrastructure failed startup validation."
+                ),
+                details={
+                    "dependencies": unavailable,
+                },
+            )
 
     async def close(self) -> None:
         """
-        Gracefully close all infrastructure adapters.
+        Close active adapters in reverse lifecycle order.
 
-        This method is called during application shutdown.
+        Shutdown continues when one adapter fails so all remaining resources
+        still receive a cleanup attempt.
 
-        Shutdown order prioritizes async infrastructure first to reduce
-        the chance of blocking shutdown operations.
-
-        Errors during shutdown are logged but do not interrupt closing of
-        other resources.
+        Commented integrations produce no shutdown behavior.
         """
 
-        logger.info("Shutting down infrastructure adapters")
+        configured_adapters = tuple(
+            self.adapters.items()
+        )
 
-        adapters = [
-            self.redis,
-            self.mongo,
-            self.postgres,
-            self.mysql,
-            self.mssql,
-        ]
-
-        for adapter in adapters:
-
-            if adapter is None:
-                continue
-
+        for name, adapter in reversed(
+            configured_adapters
+        ):
             try:
                 await adapter.close()
 
             except Exception:
-                logger.exception("Adapter shutdown failed")
+                logger.error(
+                    "Infrastructure adapter shutdown failed",
+                    extra={
+                        "adapter": name,
+                    },
+                    exc_info=True,
+                )
 
-        logger.info("Infrastructure shutdown complete")
+
+__all__ = [
+    "DatabaseRegistry",
+    "HealthStatus",
+    "InfrastructureAdapter",
+]

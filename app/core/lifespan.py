@@ -1,232 +1,119 @@
-# File: app/core/lifespan.py
 """
-===============================================================================
-APPLICATION LIFESPAN CONTROLLER (INFRASTRUCTURE BOOTSTRAP LAYER)
-===============================================================================
+File: app/core/lifespan.py
 
-This module defines the authoritative lifecycle controller for the application.
+FastAPI startup and shutdown orchestration.
 
-It is responsible for:
-
-    • Initializing infrastructure adapters
-    • Validating connectivity (fail-fast strategy)
-    • Attaching resources to FastAPI state
-    • Ensuring deterministic shutdown of all infrastructure
-
--------------------------------------------------------------------------------
-ARCHITECTURAL POSITION
--------------------------------------------------------------------------------
-
-This module belongs to the Core layer.
-
-It orchestrates infrastructure but does NOT implement it.
-
-It may depend on:
-
-    - Configuration system
-    - Infrastructure adapters
-    - Database registry
-
-It MUST NOT contain:
-
-    - Business logic
-    - Route logic
-    - Repository logic
-    - Domain behavior
-
--------------------------------------------------------------------------------
-INFRASTRUCTURE OWNERSHIP CONTRACT
--------------------------------------------------------------------------------
-
-All infrastructure resources are attached to:
-
-    app.state.db
-
-Where:
-
-    db → DatabaseRegistry
-
-Example runtime access:
-
-    request.app.state.db.postgres
-    request.app.state.db.redis
-    request.app.state.db.mongo
-
-This ensures:
-
-    - centralized resource ownership
-    - predictable dependency access
-    - easier testing
-    - consistent lifecycle management
-
--------------------------------------------------------------------------------
-FAILURE POLICY
--------------------------------------------------------------------------------
-
-If any enabled infrastructure fails during startup:
-
-    → Application startup MUST abort.
-
-Partial infrastructure initialization is not allowed.
-
--------------------------------------------------------------------------------
-SHUTDOWN GUARANTEE
--------------------------------------------------------------------------------
-
-During shutdown:
-
-    - Every adapter is closed via DatabaseRegistry
-    - Failures are logged but do not interrupt shutdown
-    - Resources are released deterministically
-
--------------------------------------------------------------------------------
-EXECUTION FLOW
--------------------------------------------------------------------------------
-
-Startup:
-
-    settings → build adapters → DatabaseRegistry → ping_all()
-
-Runtime:
-
-    request.app.state.db
-
-Shutdown:
-
-    registry.close()
-
--------------------------------------------------------------------------------
-COMPATIBILITY
--------------------------------------------------------------------------------
-
-Designed to work with:
-
-    app.infrastructure.*
-    app.db.registry.DatabaseRegistry
-    app.db.unit_of_work.UnitOfWork
+This module owns process-level infrastructure lifecycle for the API process.
+Celery workers must use their own worker lifecycle and must not reuse database
+engines or connection pools created by FastAPI.
 """
 
 from __future__ import annotations
 
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from typing import AsyncGenerator
 
 from fastapi import FastAPI
 
-from app.core.config import get_settings
+from app.core.config import AppSettings
 from app.core.logging import get_logger
-
 from app.db.registry import DatabaseRegistry
 
-from app.infrastructure.postgres import PostgresDatabase
-from app.infrastructure.mysql import MySQLDatabase
-from app.infrastructure.mssql import MSSQLDatabase
-from app.infrastructure.mongo import MongoDatabase
-from app.infrastructure.redis_client import RedisClient
-
-
-logger = get_logger("lifespan")
-
-
-# =============================================================================
-# FASTAPI LIFESPAN CONTROLLER
-# =============================================================================
+logger = get_logger(__name__)
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
+async def lifespan(
+    app: FastAPI,
+) -> AsyncGenerator[None]:
     """
-    Application lifecycle controller.
+    Initialize and close process-wide API infrastructure.
 
-    This function is passed to FastAPI during application initialization
-    and manages startup and shutdown of infrastructure resources.
+    Startup responsibilities:
 
-    Example:
+    - create the database registry from validated settings,
+    - initialize only enabled infrastructure adapters,
+    - verify required infrastructure connectivity,
+    - expose the registry through ``app.state``,
+    - mark the application ready only after startup succeeds.
 
-        app = FastAPI(lifespan=lifespan)
+    Shutdown responsibilities:
 
-    Lifecycle phases:
+    - immediately mark the process as unavailable,
+    - close all initialized infrastructure adapters,
+    - release database and Redis connection pools.
 
-        1. STARTUP
-        2. APPLICATION SERVING
-        3. SHUTDOWN
+    Args:
+        app: FastAPI application instance.
+
+    Yields:
+        Control to FastAPI after infrastructure startup completes.
+
+    Raises:
+        Exception: Propagates startup or runtime infrastructure failures so
+            the process does not continue in a partially initialized state.
     """
 
-    settings = get_settings()
+    settings: AppSettings = app.state.settings
 
-    logger.info("Application startup initiated")
+    # The registry creates only integrations explicitly enabled in settings.
+    registry = DatabaseRegistry.from_settings(settings)
+
+    app.state.ready = False
+    app.state.db = registry
+
+    logger.info(
+        "Application startup initiated",
+        extra={
+            "environment": settings.ENVIRONMENT.value,
+            "configured_databases": list(
+                settings.enabled_database_names
+            ),
+        },
+    )
 
     try:
-
-        # ---------------------------------------------------------------------
-        # INITIALIZE INFRASTRUCTURE ADAPTERS
-        # ---------------------------------------------------------------------
-
-        registry = DatabaseRegistry(
-            postgres=PostgresDatabase.from_settings(settings)
-            if settings.ENABLE_POSTGRES
-            else None,
-
-            mysql=MySQLDatabase.from_settings(settings)
-            if settings.ENABLE_MYSQL
-            else None,
-
-            mssql=MSSQLDatabase.from_settings(settings)
-            if settings.ENABLE_MSSQL
-            else None,
-
-            mongo=MongoDatabase.from_settings(settings)
-            if settings.ENABLE_MONGO
-            else None,
-
-            redis=RedisClient.from_settings(settings)
-            if settings.ENABLE_REDIS
-            else None,
+        # A startup connectivity check prevents the API from reporting ready
+        # when a required database or Redis instance is unavailable.
+        await registry.ping_all(
+            timeout_seconds=settings.HEALTHCHECK_TIMEOUT_SECONDS,
         )
 
-        # ---------------------------------------------------------------------
-        # CONNECTIVITY VALIDATION (FAIL-FAST)
-        # ---------------------------------------------------------------------
+        app.state.ready = True
 
-        logger.info("Validating infrastructure connectivity")
-
-        await registry.ping_all()
-
-        logger.info("Infrastructure validation successful")
-
-        # ---------------------------------------------------------------------
-        # ATTACH REGISTRY TO APPLICATION STATE
-        # ---------------------------------------------------------------------
-
-        app.state.db = registry
-
-        logger.info("Infrastructure registry attached to app.state.db")
-
-        # ---------------------------------------------------------------------
-        # APPLICATION SERVING PHASE
-        # ---------------------------------------------------------------------
+        logger.info(
+            "Application startup completed",
+            extra={
+                "enabled_adapters": list(registry.adapters),
+            },
+        )
 
         yield
 
     except Exception:
-        logger.exception("Application startup failed")
+        logger.exception(
+            "Application startup or runtime infrastructure failure"
+        )
         raise
 
     finally:
-
-        # ---------------------------------------------------------------------
-        # SHUTDOWN PHASE
-        # ---------------------------------------------------------------------
+        # Readiness is removed before connections begin closing so traffic
+        # can be drained by the gateway or orchestrator.
+        app.state.ready = False
 
         logger.info("Application shutdown initiated")
 
         try:
-            registry = getattr(app.state, "db", None)
-
-            if registry is not None:
-                await registry.close()
-
+            await registry.close()
         except Exception:
-            logger.exception("Infrastructure shutdown encountered errors")
+            logger.exception(
+                "Application infrastructure shutdown failed"
+            )
+            raise
+        else:
+            logger.info("Application shutdown completed")
 
-        logger.info("Application shutdown complete")
+
+__all__ = [
+    "lifespan",
+]
