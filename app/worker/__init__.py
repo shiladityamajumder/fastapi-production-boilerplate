@@ -1,5 +1,4 @@
-"""
-File: app/worker/__init__.py
+"""File: app/worker/__init__.py.
 
 Optional background-worker package.
 

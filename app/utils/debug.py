@@ -1,5 +1,4 @@
-"""
-File: app/utils/debug.py
+"""File: app/utils/debug.py.
 
 Development-only debug print helper.
 
@@ -33,8 +32,7 @@ def debug(
     message: str,
     **context: Any,
 ) -> None:
-    """
-    Print a development-only debug message.
+    """Print a development-only debug message.
 
     Args:
         message: Description of the debugging event.
@@ -50,22 +48,16 @@ def debug(
             warehouse_id=warehouse_id,
         )
     """
-
     settings = get_settings()
 
     # Disable all debug prints in production or when DEBUG is false.
-    if (
-        settings.ENVIRONMENT == Environment.PRODUCTION
-        or not settings.DEBUG
-    ):
+    if settings.ENVIRONMENT == Environment.PRODUCTION or not settings.DEBUG:
         return
 
     normalized_message = message.strip()
 
     if not normalized_message:
-        raise ValueError(
-            "Debug message must not be blank"
-        )
+        raise ValueError("Debug message must not be blank")
 
     # Apply the shared redaction logic before printing context values.
     safe_context = sanitize_log_value(context)

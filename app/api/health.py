@@ -1,5 +1,4 @@
-"""
-File: app/api/health.py
+"""File: app/api/health.py.
 
 Liveness, readiness, and bounded infrastructure diagnostics.
 
@@ -22,7 +21,7 @@ from fastapi import (
     Request,
     status,
 )
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse  # noqa: TC002
 
 from app.common.response import APIResponse
 from app.core.config import AppSettings
@@ -30,7 +29,6 @@ from app.db.registry import (
     DatabaseRegistry,
     HealthStatus,
 )
-
 
 router = APIRouter(
     prefix="/health",
@@ -41,8 +39,7 @@ router = APIRouter(
 def _get_health_dependencies(
     request: Request,
 ) -> tuple[AppSettings, DatabaseRegistry]:
-    """
-    Return health-check settings and infrastructure registry.
+    """Return health-check settings and infrastructure registry.
 
     Args:
         request: Current FastAPI request.
@@ -51,9 +48,8 @@ def _get_health_dependencies(
         Tuple containing settings and infrastructure registry.
 
     Raises:
-        RuntimeError: If application startup state is incomplete.
+        TypeError: If the application state contains an unexpected object type.
     """
-
     settings = getattr(
         request.app.state,
         "settings",
@@ -66,14 +62,20 @@ def _get_health_dependencies(
         None,
     )
 
-    if not isinstance(settings, AppSettings):
-        raise RuntimeError(
-            "Application settings are unavailable"
+    if not isinstance(
+        settings,
+        AppSettings,
+    ):
+        raise TypeError(
+            "Application settings are unavailable or invalid"
         )
 
-    if not isinstance(registry, DatabaseRegistry):
-        raise RuntimeError(
-            "Infrastructure registry is unavailable"
+    if not isinstance(
+        registry,
+        DatabaseRegistry,
+    ):
+        raise TypeError(
+            "Infrastructure registry is unavailable or invalid"
         )
 
     return settings, registry
@@ -84,8 +86,7 @@ def _serialize_checks(
     *,
     include_duration: bool,
 ) -> dict[str, dict[str, bool | float]]:
-    """
-    Convert internal dependency results into a safe API payload.
+    """Convert internal dependency results into a safe API payload.
 
     Only enabled adapters are present because ``DatabaseRegistry.check_all``
     does not return disabled integrations.
@@ -97,7 +98,6 @@ def _serialize_checks(
     Returns:
         Sanitized health-check payload.
     """
-
     serialized: dict[
         str,
         dict[str, bool | float],
@@ -121,14 +121,15 @@ def _serialize_checks(
     summary="Process liveness",
 )
 async def liveness() -> JSONResponse:
-    """
-    Return success when the ASGI process can serve requests.
+    """Return success when the ASGI process can serve requests.
 
-    Liveness intentionally performs no database, Redis, or external-service
+    Liveness intentionally performs no database, cache, or external-service
     calls. Dependency failures must not cause an orchestrator to repeatedly
     restart an otherwise functioning process.
-    """
 
+    Returns:
+        Canonical liveness response.
+    """
     return APIResponse.success(
         message="Service is alive.",
         data={
@@ -144,8 +145,7 @@ async def liveness() -> JSONResponse:
 async def readiness(
     request: Request,
 ) -> JSONResponse:
-    """
-    Return whether the service is ready to receive application traffic.
+    """Return whether the service is ready to receive application traffic.
 
     The readiness endpoint checks only infrastructure adapters enabled for this
     service. Each check is bounded by the configured timeout.
@@ -156,7 +156,6 @@ async def readiness(
     Returns:
         HTTP 200 when ready or HTTP 503 when unavailable.
     """
-
     if not getattr(
         request.app.state,
         "ready",
@@ -172,7 +171,7 @@ async def readiness(
         settings, registry = _get_health_dependencies(
             request
         )
-    except RuntimeError:
+    except TypeError:
         return APIResponse.error(
             error_code="SERVICE_NOT_READY",
             message="The service is not ready to receive traffic.",
@@ -223,8 +222,7 @@ async def readiness(
 async def deep_health(
     request: Request,
 ) -> JSONResponse:
-    """
-    Return sanitized dependency status and execution timing.
+    """Return sanitized dependency status and execution timing.
 
     The endpoint is hidden logically when deep diagnostics are disabled. It
     never returns raw exceptions, hosts, connection URLs, credentials, or
@@ -236,7 +234,6 @@ async def deep_health(
     Returns:
         Sanitized dependency health response.
     """
-
     settings = getattr(
         request.app.state,
         "settings",
@@ -244,7 +241,10 @@ async def deep_health(
     )
 
     if (
-        not isinstance(settings, AppSettings)
+        not isinstance(
+            settings,
+            AppSettings,
+        )
         or not settings.DEEP_HEALTH_ENABLED
     ):
         return APIResponse.error(
@@ -259,7 +259,10 @@ async def deep_health(
         None,
     )
 
-    if not isinstance(registry, DatabaseRegistry):
+    if not isinstance(
+        registry,
+        DatabaseRegistry,
+    ):
         return APIResponse.error(
             error_code="SERVICE_NOT_READY",
             message="The service is not ready to receive traffic.",

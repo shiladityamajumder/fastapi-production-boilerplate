@@ -1,5 +1,4 @@
-"""
-File: app/common/pagination.py
+"""File: app/common/pagination.py.
 
 Typed offset-pagination primitives for SQLAlchemy repositories.
 
@@ -13,18 +12,16 @@ Repositories must apply deterministic ordering before pagination.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
 
 from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
 )
-from sqlalchemy import Select
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import Select  # noqa: TC002
+from sqlalchemy.ext.asyncio import AsyncSession  # noqa: TC002
 
 from app.common.response import PaginationMeta
-
 
 DEFAULT_LIMIT = 20
 MAX_LIMIT = 100
@@ -32,8 +29,7 @@ MAX_OFFSET = 100_000
 
 
 class PaginationParams(BaseModel):
-    """
-    Validated public offset-pagination request parameters.
+    """Validated public offset-pagination request parameters.
 
     Attributes:
         limit: Maximum number of records returned.
@@ -63,8 +59,7 @@ class PaginationParams(BaseModel):
     slots=True,
 )
 class PaginationResult[T]:
-    """
-    Materialized records and their pagination metadata.
+    """Materialized records and their pagination metadata.
 
     Attributes:
         items: Records returned for the current page.
@@ -75,28 +70,26 @@ class PaginationResult[T]:
     pagination: PaginationMeta
 
 
-def apply_pagination(
-    statement: Select[Any],
+def apply_pagination[T](
+    statement: Select[tuple[T]],
     *,
     params: PaginationParams,
-) -> Select[Any]:
-    """
-    Apply validated limit and offset values to a query.
+) -> Select[tuple[T]]:
+    """Apply validated limit and offset values to a query.
 
-    The caller must apply deterministic sorting first.
+    The caller must apply deterministic sorting before pagination.
 
     Args:
-        statement: SQLAlchemy select statement.
+        statement: SQLAlchemy scalar select statement.
         params: Validated pagination parameters.
 
     Returns:
         Paginated SQLAlchemy statement.
     """
-
     return statement.limit(
-        params.limit
+        params.limit,
     ).offset(
-        params.offset
+        params.offset,
     )
 
 
@@ -105,8 +98,7 @@ def build_pagination_meta(
     total_count: int,
     params: PaginationParams,
 ) -> PaginationMeta:
-    """
-    Build public pagination metadata.
+    """Build public pagination metadata.
 
     Args:
         total_count: Total number of matching records.
@@ -118,7 +110,6 @@ def build_pagination_meta(
     Raises:
         ValueError: If ``total_count`` is negative.
     """
-
     if total_count < 0:
         raise ValueError(
             "total_count cannot be negative"
@@ -130,20 +121,20 @@ def build_pagination_meta(
         offset=params.offset,
         has_next=(
             params.offset + params.limit
-        ) < total_count,
+        )
+        < total_count,
     )
 
 
 async def paginate_scalars[T](
     *,
     session: AsyncSession,
-    data_statement: Select[Any],
-    count_statement: Select[Any],
+    data_statement: Select[tuple[T]],
+    count_statement: Select[tuple[int]],
     params: PaginationParams,
     unique: bool = False,
 ) -> PaginationResult[T]:
-    """
-    Execute a dedicated count query and paginated scalar data query.
+    """Execute a count query and paginated scalar data query.
 
     Requiring a caller-supplied count statement avoids incorrect totals caused
     by joins and prevents this helper from generating unexpectedly expensive
@@ -151,8 +142,8 @@ async def paginate_scalars[T](
 
     Args:
         session: Active asynchronous SQLAlchemy session.
-        data_statement: Scalar entity or scalar-value select statement.
-        count_statement: Statement returning the total matching row count.
+        data_statement: Statement selecting one scalar entity or value.
+        count_statement: Statement selecting the total matching row count.
         params: Validated pagination parameters.
         unique: Deduplicate scalar ORM results when joined eager loading
             produces repeated entities.
@@ -160,14 +151,12 @@ async def paginate_scalars[T](
     Returns:
         Materialized page and canonical pagination metadata.
     """
-
     total_value = await session.scalar(
-        count_statement
+        count_statement,
     )
 
     total_count = int(
-        total_value
-        or 0
+        total_value or 0
     )
 
     scalar_result = await session.scalars(
@@ -180,7 +169,7 @@ async def paginate_scalars[T](
     if unique:
         scalar_result = scalar_result.unique()
 
-    items = list(
+    items: list[T] = list(
         scalar_result.all()
     )
 

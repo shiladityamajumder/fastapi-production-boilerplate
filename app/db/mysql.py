@@ -1,5 +1,4 @@
-"""
-File: app/db/mysql.py
+"""File: app/db/mysql.py.
 
 Asynchronous MySQL engine and session lifecycle adapter.
 
@@ -17,7 +16,7 @@ Each request, service operation, or task must create its own ``AsyncSession`` or
 
 from __future__ import annotations
 
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator  # noqa: TC003
 from contextlib import asynccontextmanager
 
 from sqlalchemy import text
@@ -28,17 +27,14 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 
-from app.core.config import AppSettings
+from app.core.config import AppSettings  # noqa: TC001
 from app.core.logging import get_logger
-
 
 logger = get_logger(__name__)
 
 
 class MySQLDatabase:
-    """
-    Own one process-local asynchronous MySQL engine and session factory.
-    """
+    """Own one process-local asynchronous MySQL engine and session factory."""
 
     def __init__(
         self,
@@ -46,8 +42,7 @@ class MySQLDatabase:
         url: str,
         settings: AppSettings,
     ) -> None:
-        """
-        Initialize the MySQL engine and session factory.
+        """Initialize the MySQL engine and session factory.
 
         Args:
             url: Validated SQLAlchemy asynchronous MySQL URL.
@@ -56,13 +51,10 @@ class MySQLDatabase:
         Raises:
             ValueError: If the URL is blank.
         """
-
         normalized_url = url.strip()
 
         if not normalized_url:
-            raise ValueError(
-                "MySQL connection URL must not be blank"
-            )
+            raise ValueError("MySQL connection URL must not be blank")
 
         self._engine: AsyncEngine = create_async_engine(
             normalized_url,
@@ -74,9 +66,7 @@ class MySQLDatabase:
             pool_use_lifo=settings.SQL_POOL_USE_LIFO,
             pool_reset_on_return="rollback",
             connect_args={
-                "connect_timeout": (
-                    settings.MYSQL_CONNECT_TIMEOUT_SECONDS
-                ),
+                "connect_timeout": settings.MYSQL_CONNECT_TIMEOUT_SECONDS,
             },
             echo=settings.SQL_ECHO,
             hide_parameters=True,
@@ -104,8 +94,7 @@ class MySQLDatabase:
         cls,
         settings: AppSettings,
     ) -> MySQLDatabase:
-        """
-        Build the adapter from validated application settings.
+        """Build the adapter from validated application settings.
 
         Args:
             settings: Validated application settings.
@@ -116,18 +105,13 @@ class MySQLDatabase:
         Raises:
             RuntimeError: If MySQL is disabled or not configured.
         """
-
         if not settings.ENABLE_MYSQL:
-            raise RuntimeError(
-                "MySQL is not enabled"
-            )
+            raise RuntimeError("MySQL is not enabled")
 
         url = settings.mysql_url_value
 
         if not url:
-            raise RuntimeError(
-                "MySQL connection URL is not configured"
-            )
+            raise RuntimeError("MySQL connection URL is not configured")
 
         return cls(
             url=url,
@@ -136,31 +120,25 @@ class MySQLDatabase:
 
     @property
     def engine(self) -> AsyncEngine:
-        """
-        Return the process-local SQLAlchemy asynchronous engine.
+        """Return the process-local SQLAlchemy asynchronous engine.
 
         Direct engine access should be limited to infrastructure operations,
         diagnostics, and advanced database behavior.
         """
-
         return self._engine
 
     @property
     def session_factory(
         self,
     ) -> async_sessionmaker[AsyncSession]:
-        """
-        Return the process-local asynchronous session factory.
-        """
-
+        """Return the process-local asynchronous session factory."""
         return self._session_factory
 
     @asynccontextmanager
     async def session(
         self,
     ) -> AsyncGenerator[AsyncSession]:
-        """
-        Yield an isolated session and guarantee cleanup.
+        """Yield an isolated session and guarantee cleanup.
 
         This helper is suitable for read-only workflows or infrastructure
         operations. Transactional write workflows should normally use
@@ -169,7 +147,6 @@ class MySQLDatabase:
         Yields:
             Isolated asynchronous SQLAlchemy session.
         """
-
         session = self._session_factory()
 
         try:
@@ -182,33 +159,22 @@ class MySQLDatabase:
                 await session.close()
 
     async def ping(self) -> None:
-        """
-        Execute a lightweight MySQL connectivity query.
+        """Execute a lightweight MySQL connectivity query.
 
         Raises:
             Exception: Propagates connection, authentication, timeout, and
                 query failures to the lifecycle boundary.
         """
-
         async with self._engine.connect() as connection:
-            await connection.execute(
-                text("SELECT 1")
-            )
+            await connection.execute(text("SELECT 1"))
 
-        logger.debug(
-            "MySQL connectivity verified"
-        )
+        logger.debug("MySQL connectivity verified")
 
     async def close(self) -> None:
-        """
-        Dispose the engine and all pooled MySQL connections.
-        """
-
+        """Dispose the engine and all pooled MySQL connections."""
         await self._engine.dispose()
 
-        logger.info(
-            "MySQL database adapter closed"
-        )
+        logger.info("MySQL database adapter closed")
 
 
 __all__ = [

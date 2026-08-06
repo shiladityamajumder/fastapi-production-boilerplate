@@ -1151,10 +1151,7 @@ Example:
 ```python
 BEAT_SCHEDULE = {
     "rack-replenishment-every-night": {
-        "task": (
-            "app.worker.tasks."
-            "rack_replenishment_task.run"
-        ),
+        "task": ("app.worker.tasks.rack_replenishment_task.run"),
         "schedule": crontab(
             hour=22,
             minute=30,

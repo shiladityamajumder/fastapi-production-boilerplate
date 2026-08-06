@@ -1,5 +1,4 @@
-"""
-File: app/utils/id_utils.py
+"""File: app/utils/id_utils.py.
 
 Framework-independent secure identifier and token helpers.
 
@@ -17,11 +16,7 @@ import secrets
 import string
 import uuid
 
-
-BASE62_ALPHABET = (
-    string.ascii_letters
-    + string.digits
-)
+BASE62_ALPHABET = string.ascii_letters + string.digits
 
 MIN_SHORT_ID_LENGTH = 12
 MAX_SHORT_ID_LENGTH = 128
@@ -31,32 +26,27 @@ MAX_TOKEN_ENTROPY_BYTES = 128
 
 
 def generate_uuid() -> str:
-    """
-    Generate a random UUID version 4 string.
+    """Generate a random UUID version 4 string.
 
     Returns:
         Canonical lowercase UUID string.
     """
-
     return str(uuid.uuid4())
 
 
 def generate_uuid_hex() -> str:
-    """
-    Generate a UUID version 4 without hyphen separators.
+    """Generate a UUID version 4 without hyphen separators.
 
     Returns:
         Thirty-two-character lowercase hexadecimal UUID.
     """
-
     return uuid.uuid4().hex
 
 
 def generate_short_id(
     length: int = 16,
 ) -> str:
-    """
-    Generate a cryptographically random Base62 identifier.
+    """Generate a cryptographically random Base62 identifier.
 
     Base62 identifiers are useful for compact public references, correlation
     values, invitation codes, and non-sequential resource identifiers.
@@ -74,7 +64,6 @@ def generate_short_id(
         TypeError: If ``length`` is not an integer.
         ValueError: If ``length`` is outside the supported range.
     """
-
     _validate_integer_range(
         value=length,
         name="length",
@@ -82,17 +71,13 @@ def generate_short_id(
         maximum=MAX_SHORT_ID_LENGTH,
     )
 
-    return "".join(
-        secrets.choice(BASE62_ALPHABET)
-        for _ in range(length)
-    )
+    return "".join(secrets.choice(BASE62_ALPHABET) for _ in range(length))
 
 
 def generate_secure_token(
     entropy_bytes: int = 32,
 ) -> str:
-    """
-    Generate a hexadecimal token with cryptographic entropy.
+    """Generate a hexadecimal token with cryptographic entropy.
 
     The returned string contains two hexadecimal characters per entropy byte.
     For example, 32 entropy bytes produce a 64-character token.
@@ -107,7 +92,6 @@ def generate_secure_token(
         TypeError: If ``entropy_bytes`` is not an integer.
         ValueError: If the requested entropy is outside the supported range.
     """
-
     _validate_integer_range(
         value=entropy_bytes,
         name="entropy_bytes",
@@ -115,16 +99,13 @@ def generate_secure_token(
         maximum=MAX_TOKEN_ENTROPY_BYTES,
     )
 
-    return secrets.token_hex(
-        entropy_bytes
-    )
+    return secrets.token_hex(entropy_bytes)
 
 
 def generate_urlsafe_token(
     entropy_bytes: int = 32,
 ) -> str:
-    """
-    Generate a URL-safe token with cryptographic entropy.
+    """Generate a URL-safe token with cryptographic entropy.
 
     This format is useful for verification links, password-reset links, and
     opaque external references.
@@ -139,7 +120,6 @@ def generate_urlsafe_token(
         TypeError: If ``entropy_bytes`` is not an integer.
         ValueError: If the requested entropy is outside the supported range.
     """
-
     _validate_integer_range(
         value=entropy_bytes,
         name="entropy_bytes",
@@ -147,17 +127,14 @@ def generate_urlsafe_token(
         maximum=MAX_TOKEN_ENTROPY_BYTES,
     )
 
-    return secrets.token_urlsafe(
-        entropy_bytes
-    )
+    return secrets.token_urlsafe(entropy_bytes)
 
 
 def secure_compare(
     value: str,
     expected: str,
 ) -> bool:
-    """
-    Compare sensitive strings using constant-time comparison.
+    """Compare sensitive strings using constant-time comparison.
 
     This helper is suitable for comparing API keys, verification tokens, and
     other secret values after applying the correct hashing strategy.
@@ -172,16 +149,11 @@ def secure_compare(
     Raises:
         TypeError: If either value is not a string.
     """
-
     if not isinstance(value, str):
-        raise TypeError(
-            "value must be a string"
-        )
+        raise TypeError("value must be a string")
 
     if not isinstance(expected, str):
-        raise TypeError(
-            "expected must be a string"
-        )
+        raise TypeError("expected must be a string")
 
     return secrets.compare_digest(
         value,
@@ -196,8 +168,7 @@ def _validate_integer_range(
     minimum: int,
     maximum: int,
 ) -> None:
-    """
-    Validate an integer against inclusive limits.
+    """Validate an integer against inclusive limits.
 
     Boolean values are rejected even though ``bool`` subclasses ``int``.
 
@@ -211,19 +182,14 @@ def _validate_integer_range(
         TypeError: If ``value`` is not an integer.
         ValueError: If ``value`` is outside the supported range.
     """
-
     if isinstance(value, bool) or not isinstance(
         value,
         int,
     ):
-        raise TypeError(
-            f"{name} must be an integer"
-        )
+        raise TypeError(f"{name} must be an integer")
 
     if not minimum <= value <= maximum:
-        raise ValueError(
-            f"{name} must be between {minimum} and {maximum}"
-        )
+        raise ValueError(f"{name} must be between {minimum} and {maximum}")
 
 
 __all__ = [

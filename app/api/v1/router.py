@@ -1,5 +1,4 @@
-"""
-File: app/api/v1/router.py
+"""File: app/api/v1/router.py.
 
 Version-one API router registry.
 
@@ -15,19 +14,18 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from app.modules.dummy_items.routes import (
-    router as dummy_items_router,
-)
-
+# from app.modules.dummy_items.routes import (
+#     router as dummy_items_router,
+# )
 
 router = APIRouter()
 
 
 # Keep feature registration explicit. This makes enabled API modules easy to
 # discover and avoids dynamic import behavior during application startup.
-router.include_router(
-    dummy_items_router,
-)
+# router.include_router(
+#     dummy_items_router,
+# )
 
 
 __all__ = [

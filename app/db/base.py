@@ -1,5 +1,4 @@
-"""
-File: app/db/base.py
+"""File: app/db/base.py.
 
 Shared SQLAlchemy declarative metadata root.
 
@@ -17,8 +16,7 @@ from sqlalchemy.orm import DeclarativeBase
 
 
 class Base(DeclarativeBase):
-    """
-    Base class for all relational SQLAlchemy ORM mappings.
+    """Base class for all relational SQLAlchemy ORM mappings.
 
     This class intentionally contains no automatic table creation, migration,
     or database-specific behavior.

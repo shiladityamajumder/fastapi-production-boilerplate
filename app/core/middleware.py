@@ -1,5 +1,4 @@
-"""
-File: app/core/middleware.py
+"""File: app/core/middleware.py.
 
 Pure-ASGI middleware for request context, security, request limits, CORS, and
 HTTP observability.
@@ -21,46 +20,46 @@ import re
 import time
 import uuid
 
-from fastapi import FastAPI
+from fastapi import FastAPI  # noqa: TC002
 from starlette.datastructures import (
     Headers,
     MutableHeaders,
 )
 from starlette.middleware.cors import CORSMiddleware
 from starlette.types import (
-    ASGIApp,
-    Message,
-    Receive,
-    Scope,
-    Send,
+    ASGIApp,  # noqa: TC002
+    Message,  # noqa: TC002
+    Receive,  # noqa: TC002
+    Scope,  # noqa: TC002
+    Send,  # noqa: TC002
 )
 
 from app.common.response import APIResponse
-from app.core.config import AppSettings
+from app.core.config import AppSettings  # noqa: TC001
 from app.core.logging import get_logger
 from app.core.request_context import (
     reset_request_context,
     set_request_context,
 )
 
-
 logger = get_logger(__name__)
 
 
 _IDENTIFIER_PATTERN = re.compile(
-    r"^[A-Za-z0-9._:/-]{1,128}$"
+    r"^[A-Za-z0-9._:/-]{1,128}$",
 )
 
 _TRACEPARENT_PATTERN = re.compile(
-    r"^00-([0-9a-f]{32})-([0-9a-f]{16})-([0-9a-f]{2})$"
+    r"^00-([0-9a-f]{32})-([0-9a-f]{16})-([0-9a-f]{2})$",
 )
+
+_HTTP_SERVER_ERROR_STATUS_MIN = 500
 
 
 def _accepted_identifier(
     value: str | None,
 ) -> str | None:
-    """
-    Normalize and validate an incoming request identifier.
+    """Normalize and validate an incoming request identifier.
 
     Args:
         value: Raw header value.
@@ -68,7 +67,6 @@ def _accepted_identifier(
     Returns:
         Validated identifier or ``None`` when the value is missing or invalid.
     """
-
     if value is None:
         return None
 
@@ -83,8 +81,7 @@ def _accepted_identifier(
 def _extract_trace_id(
     traceparent: str | None,
 ) -> str | None:
-    """
-    Extract a valid trace identifier from a W3C ``traceparent`` header.
+    """Extract a valid trace identifier from a W3C traceparent header.
 
     Args:
         traceparent: Raw ``traceparent`` header.
@@ -92,7 +89,6 @@ def _extract_trace_id(
     Returns:
         A 32-character lowercase trace identifier or ``None``.
     """
-
     if not traceparent:
         return None
 
@@ -115,8 +111,7 @@ def _extract_trace_id(
 def _hash_client_ip(
     scope: Scope,
 ) -> str | None:
-    """
-    Return a privacy-reduced hash of the direct ASGI client address.
+    """Return a privacy-reduced hash of the direct ASGI client address.
 
     The raw address is never logged. Forwarded client headers are intentionally
     ignored here because they must only be trusted through explicit gateway or
@@ -128,7 +123,6 @@ def _hash_client_ip(
     Returns:
         Short hexadecimal hash or ``None``.
     """
-
     client = scope.get("client")
 
     if not client:
@@ -143,15 +137,23 @@ def _hash_client_ip(
 def _resolved_route_template(
     scope: Scope,
 ) -> str:
-    """
-    Return the matched route template without logging raw URL parameters.
+    """Return the matched route template without raw URL parameters.
 
     Route templates produce bounded-cardinality metrics such as
     ``/products/{product_id}`` instead of recording every product identifier.
-    """
 
+    Args:
+        scope: Current ASGI request scope.
+
+    Returns:
+        Matched route template or ``unmatched``.
+    """
     route = scope.get("route")
-    route_path = getattr(route, "path", None)
+    route_path = getattr(
+        route,
+        "path",
+        None,
+    )
 
     if isinstance(route_path, str) and route_path:
         return route_path
@@ -160,8 +162,7 @@ def _resolved_route_template(
 
 
 class RequestContextMiddleware:
-    """
-    Bind request, correlation, trace, and API-version context.
+    """Bind request, correlation, trace, and API-version context.
 
     Valid incoming identifiers are propagated. Invalid identifiers are ignored
     and replaced with generated values.
@@ -173,14 +174,12 @@ class RequestContextMiddleware:
         *,
         api_version: str,
     ) -> None:
-        """
-        Initialize request-context middleware.
+        """Initialize request-context middleware.
 
         Args:
             app: Downstream ASGI application.
             api_version: Configured API prefix or version.
         """
-
         self.app = app
 
         normalized_version = api_version.strip().strip("/")
@@ -200,7 +199,6 @@ class RequestContextMiddleware:
         send: Send,
     ) -> None:
         """Bind context for one HTTP request."""
-
         if scope["type"] != "http":
             await self.app(
                 scope,
@@ -209,7 +207,9 @@ class RequestContextMiddleware:
             )
             return
 
-        headers = Headers(scope=scope)
+        headers = Headers(
+            scope=scope,
+        )
 
         request_id = (
             _accepted_identifier(
@@ -240,20 +240,14 @@ class RequestContextMiddleware:
             message: Message,
         ) -> None:
             """Attach correlation metadata to the response."""
-
             if message["type"] == "http.response.start":
                 response_headers = MutableHeaders(
                     scope=message,
                 )
 
                 response_headers["X-Request-ID"] = request_id
-                response_headers[
-                    "X-Correlation-ID"
-                ] = correlation_id
-
-                response_headers[
-                    "X-API-Version"
-                ] = self.api_version
+                response_headers["X-Correlation-ID"] = correlation_id
+                response_headers["X-API-Version"] = self.api_version
 
             await send(message)
 
@@ -268,8 +262,7 @@ class RequestContextMiddleware:
 
 
 class RequestLoggingMiddleware:
-    """
-    Emit one structured completion record for every HTTP request.
+    """Emit one structured completion record for every HTTP request.
 
     Query strings and request bodies are deliberately excluded to avoid logging
     sensitive data and creating unbounded log cardinality.
@@ -281,14 +274,12 @@ class RequestLoggingMiddleware:
         *,
         slow_threshold_ms: int,
     ) -> None:
-        """
-        Initialize request logging.
+        """Initialize request logging.
 
         Args:
             app: Downstream ASGI application.
             slow_threshold_ms: Duration at which a request is logged as slow.
         """
-
         self.app = app
         self.slow_threshold_ms = slow_threshold_ms
 
@@ -299,7 +290,6 @@ class RequestLoggingMiddleware:
         send: Send,
     ) -> None:
         """Process and log one HTTP request."""
-
         if scope["type"] != "http":
             await self.app(
                 scope,
@@ -310,14 +300,13 @@ class RequestLoggingMiddleware:
 
         started = time.perf_counter()
 
-        status_code = 500
+        status_code = _HTTP_SERVER_ERROR_STATUS_MIN
         escaped_exception = False
 
         async def send_wrapper(
             message: Message,
         ) -> None:
             """Capture the final HTTP status code."""
-
             nonlocal status_code
 
             if message["type"] == "http.response.start":
@@ -336,11 +325,7 @@ class RequestLoggingMiddleware:
             raise
         finally:
             duration_ms = round(
-                (
-                    time.perf_counter()
-                    - started
-                )
-                * 1_000,
+                (time.perf_counter() - started) * 1_000,
                 2,
             )
 
@@ -353,7 +338,10 @@ class RequestLoggingMiddleware:
                 "exception_escaped": escaped_exception,
             }
 
-            if escaped_exception or status_code >= 500:
+            if (
+                escaped_exception
+                or status_code >= _HTTP_SERVER_ERROR_STATUS_MIN
+            ):
                 logger.error(
                     "HTTP request failed",
                     extra=log_context,
@@ -371,8 +359,7 @@ class RequestLoggingMiddleware:
 
 
 class RequestSizeLimitMiddleware:
-    """
-    Reject request bodies larger than the configured byte limit.
+    """Reject request bodies larger than the configured byte limit.
 
     Both fixed-length and chunked request bodies are supported without buffering
     the complete payload in memory.
@@ -384,14 +371,12 @@ class RequestSizeLimitMiddleware:
         *,
         max_body_bytes: int,
     ) -> None:
-        """
-        Initialize request-size enforcement.
+        """Initialize request-size enforcement.
 
         Args:
             app: Downstream ASGI application.
             max_body_bytes: Maximum accepted request-body size.
         """
-
         self.app = app
         self.max_body_bytes = max_body_bytes
 
@@ -402,7 +387,6 @@ class RequestSizeLimitMiddleware:
         send: Send,
     ) -> None:
         """Enforce the request-body limit for one HTTP request."""
-
         if scope["type"] != "http":
             await self.app(
                 scope,
@@ -417,7 +401,7 @@ class RequestSizeLimitMiddleware:
 
         if content_length is not None:
             declared_length = self._parse_content_length(
-                content_length
+                content_length,
             )
 
             if declared_length is None:
@@ -441,18 +425,20 @@ class RequestSizeLimitMiddleware:
 
         async def limited_receive() -> Message:
             """Track streamed body bytes without buffering the body."""
-
             nonlocal received_bytes
 
             message = await receive()
 
             if message["type"] == "http.request":
                 received_bytes += len(
-                    message.get("body", b""),
+                    message.get(
+                        "body",
+                        b"",
+                    ),
                 )
 
                 if received_bytes > self.max_body_bytes:
-                    raise _RequestBodyTooLarge
+                    raise _RequestBodyTooLargeError
 
             return message
 
@@ -460,7 +446,6 @@ class RequestSizeLimitMiddleware:
             message: Message,
         ) -> None:
             """Track whether the downstream response has already started."""
-
             nonlocal response_started
 
             if message["type"] == "http.response.start":
@@ -474,7 +459,7 @@ class RequestSizeLimitMiddleware:
                 limited_receive,
                 send_wrapper,
             )
-        except _RequestBodyTooLarge:
+        except _RequestBodyTooLargeError:
             # A second response cannot be emitted after headers have already
             # been sent. In that unusual case, propagate the exception so the
             # server terminates the incomplete response safely.
@@ -491,8 +476,14 @@ class RequestSizeLimitMiddleware:
     def _parse_content_length(
         value: str,
     ) -> int | None:
-        """Parse a non-negative Content-Length value."""
+        """Parse a non-negative Content-Length value.
 
+        Args:
+            value: Raw Content-Length header value.
+
+        Returns:
+            Parsed non-negative length or ``None``.
+        """
         try:
             parsed = int(value)
         except ValueError:
@@ -511,7 +502,6 @@ class RequestSizeLimitMiddleware:
         send: Send,
     ) -> None:
         """Return a standardized invalid Content-Length response."""
-
         response = APIResponse.error(
             error_code="INVALID_CONTENT_LENGTH",
             message="The Content-Length header is invalid.",
@@ -532,7 +522,6 @@ class RequestSizeLimitMiddleware:
         send: Send,
     ) -> None:
         """Return a standardized payload-too-large response."""
-
         response = APIResponse.error(
             error_code="PAYLOAD_TOO_LARGE",
             message="The request body exceeds the allowed size.",
@@ -549,14 +538,12 @@ class RequestSizeLimitMiddleware:
         )
 
 
-class _RequestBodyTooLarge(Exception):
-    """Internal control-flow signal for streamed request-body overflow."""
+class _RequestBodyTooLargeError(Exception):
+    """Signal streamed request-body overflow internally."""
 
 
 class SecurityHeadersMiddleware:
-    """
-    Add conservative security and cache-control headers to API responses.
-    """
+    """Add conservative security and cache-control headers to API responses."""
 
     def __init__(
         self,
@@ -565,15 +552,13 @@ class SecurityHeadersMiddleware:
         enabled: bool,
         hsts_enabled: bool,
     ) -> None:
-        """
-        Initialize security-header middleware.
+        """Initialize security-header middleware.
 
         Args:
             app: Downstream ASGI application.
             enabled: Whether standard security headers are added.
             hsts_enabled: Whether HSTS is added.
         """
-
         self.app = app
         self.enabled = enabled
         self.hsts_enabled = hsts_enabled
@@ -585,7 +570,6 @@ class SecurityHeadersMiddleware:
         send: Send,
     ) -> None:
         """Attach security headers to one HTTP response."""
-
         if scope["type"] != "http" or not self.enabled:
             await self.app(
                 scope,
@@ -598,7 +582,6 @@ class SecurityHeadersMiddleware:
             message: Message,
         ) -> None:
             """Add headers before the response starts."""
-
             if message["type"] == "http.response.start":
                 headers = MutableHeaders(
                     scope=message,
@@ -648,8 +631,7 @@ def register_middleware(
     app: FastAPI,
     settings: AppSettings,
 ) -> None:
-    """
-    Register global application middleware.
+    """Register global application middleware.
 
     Starlette applies the last added middleware as the outermost wrapper. The
     registration order therefore ensures:
@@ -664,7 +646,6 @@ def register_middleware(
         app: FastAPI application instance.
         settings: Validated application settings.
     """
-
     # Innermost middleware: reject oversized bodies before route handlers read
     # or deserialize the complete payload.
     app.add_middleware(
@@ -680,18 +661,14 @@ def register_middleware(
 
     app.add_middleware(
         RequestLoggingMiddleware,
-        slow_threshold_ms=(
-            settings.SLOW_REQUEST_THRESHOLD_MS
-        ),
+        slow_threshold_ms=settings.SLOW_REQUEST_THRESHOLD_MS,
     )
 
     if settings.CORS_ALLOWED_ORIGINS:
         app.add_middleware(
             CORSMiddleware,
             allow_origins=settings.CORS_ALLOWED_ORIGINS,
-            allow_credentials=(
-                settings.CORS_ALLOW_CREDENTIALS
-            ),
+            allow_credentials=settings.CORS_ALLOW_CREDENTIALS,
             allow_methods=[
                 "GET",
                 "POST",

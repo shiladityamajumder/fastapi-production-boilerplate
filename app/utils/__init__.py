@@ -1,5 +1,4 @@
-"""
-File: app/utils/__init__.py
+"""File: app/utils/__init__.py.
 
 Small framework-independent utility functions.
 

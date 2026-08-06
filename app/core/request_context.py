@@ -1,5 +1,4 @@
-"""
-File: app/core/request_context.py
+"""File: app/core/request_context.py.
 
 Request- and task-scoped observability context based on ``contextvars``.
 
@@ -22,7 +21,6 @@ from contextvars import (
     Token,
 )
 from dataclasses import dataclass
-
 
 _request_id: ContextVar[str | None] = ContextVar(
     "request_id",
@@ -55,8 +53,7 @@ _api_version: ContextVar[str] = ContextVar(
     slots=True,
 )
 class RequestContextTokens:
-    """
-    Tokens required to restore the previous execution context.
+    """Tokens required to restore the previous execution context.
 
     Context variables must be reset in reverse assignment order to safely
     restore any parent request or task context.
@@ -73,8 +70,7 @@ def _normalize_required_identifier(
     value: str,
     name: str,
 ) -> str:
-    """
-    Normalize and validate a required context identifier.
+    """Normalize and validate a required context identifier.
 
     Args:
         value: Raw identifier value.
@@ -86,13 +82,10 @@ def _normalize_required_identifier(
     Raises:
         ValueError: If the identifier is blank.
     """
-
     normalized = value.strip()
 
     if not normalized:
-        raise ValueError(
-            f"{name} must be non-empty"
-        )
+        raise ValueError(f"{name} must be non-empty")
 
     return normalized
 
@@ -101,7 +94,6 @@ def _normalize_optional_identifier(
     value: str | None,
 ) -> str | None:
     """Normalize an optional context identifier."""
-
     if value is None:
         return None
 
@@ -117,8 +109,7 @@ def set_request_context(
     api_version: str,
     task_id: str | None = None,
 ) -> RequestContextTokens:
-    """
-    Bind request or task metadata to the current asynchronous context.
+    """Bind request or task metadata to the current asynchronous context.
 
     Args:
         request_id: Identifier for the current HTTP request or task execution.
@@ -130,7 +121,6 @@ def set_request_context(
     Returns:
         Tokens required to restore the previous context.
     """
-
     normalized_request_id = _normalize_required_identifier(
         request_id,
         "request_id",
@@ -141,10 +131,7 @@ def set_request_context(
         "correlation_id",
     )
 
-    normalized_api_version = (
-        api_version.strip().strip("/")
-        or "v1"
-    )
+    normalized_api_version = api_version.strip().strip("/") or "v1"
 
     return RequestContextTokens(
         request_id=_request_id.set(
@@ -168,13 +155,11 @@ def set_request_context(
 def reset_request_context(
     tokens: RequestContextTokens,
 ) -> None:
-    """
-    Restore every context variable to its previous value.
+    """Restore every context variable to its previous value.
 
     Args:
         tokens: Tokens returned by ``set_request_context``.
     """
-
     _api_version.reset(tokens.api_version)
     _task_id.reset(tokens.task_id)
     _trace_id.reset(tokens.trace_id)
@@ -185,13 +170,11 @@ def reset_request_context(
 def set_request_id(
     request_id: str,
 ) -> Token[str | None]:
-    """
-    Set only the request identifier.
+    """Set only the request identifier.
 
     This helper is retained for narrow compatibility cases. New request or
     Celery lifecycle code should normally use ``set_request_context``.
     """
-
     normalized = _normalize_required_identifier(
         request_id,
         "request_id",
@@ -204,7 +187,6 @@ def reset_request_id(
     token: Token[str | None],
 ) -> None:
     """Reset a token returned by ``set_request_id``."""
-
     _request_id.reset(token)
 
 
@@ -212,7 +194,6 @@ def set_correlation_id(
     correlation_id: str,
 ) -> Token[str | None]:
     """Set only the cross-service correlation identifier."""
-
     normalized = _normalize_required_identifier(
         correlation_id,
         "correlation_id",
@@ -225,7 +206,6 @@ def reset_correlation_id(
     token: Token[str | None],
 ) -> None:
     """Reset a token returned by ``set_correlation_id``."""
-
     _correlation_id.reset(token)
 
 
@@ -233,7 +213,6 @@ def set_task_id(
     task_id: str,
 ) -> Token[str | None]:
     """Set the current Celery or background-task identifier."""
-
     normalized = _normalize_required_identifier(
         task_id,
         "task_id",
@@ -246,7 +225,6 @@ def reset_task_id(
     token: Token[str | None],
 ) -> None:
     """Reset a token returned by ``set_task_id``."""
-
     _task_id.reset(token)
 
 
@@ -254,7 +232,6 @@ def get_request_id(
     default: str | None = None,
 ) -> str | None:
     """Return the current request identifier."""
-
     return _request_id.get() or default
 
 
@@ -262,7 +239,6 @@ def get_correlation_id(
     default: str | None = None,
 ) -> str | None:
     """Return the current cross-service correlation identifier."""
-
     return _correlation_id.get() or default
 
 
@@ -270,7 +246,6 @@ def get_trace_id(
     default: str | None = None,
 ) -> str | None:
     """Return the current distributed-tracing identifier."""
-
     return _trace_id.get() or default
 
 
@@ -278,13 +253,11 @@ def get_task_id(
     default: str | None = None,
 ) -> str | None:
     """Return the current Celery or background-task identifier."""
-
     return _task_id.get() or default
 
 
 def get_api_version() -> str:
     """Return the API version associated with the current execution."""
-
     return _api_version.get()
 
 

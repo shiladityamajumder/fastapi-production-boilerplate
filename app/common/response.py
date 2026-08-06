@@ -1,5 +1,4 @@
-"""
-File: app/common/response.py
+"""File: app/common/response.py.
 
 Canonical external API response envelope.
 
@@ -27,7 +26,7 @@ than constructing HTTP responses directly.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime  # noqa: TC003
 from typing import Any
 
 from fastapi import status
@@ -48,10 +47,14 @@ from app.core.request_context import (
 )
 from app.utils.datetime_utils import utc_now
 
+_HTTP_SUCCESS_MIN = status.HTTP_200_OK
+_HTTP_SUCCESS_MAX_EXCLUSIVE = status.HTTP_400_BAD_REQUEST
+_HTTP_ERROR_MIN = status.HTTP_400_BAD_REQUEST
+_HTTP_ERROR_MAX = 599
+
 
 class APIModel(BaseModel):
-    """
-    Base model for externally serialized API payloads.
+    """Base model for externally serialized API payloads.
 
     Internal Python code uses snake_case. JSON responses use camelCase aliases.
     Unknown fields are rejected to keep the public contract predictable.
@@ -65,8 +68,7 @@ class APIModel(BaseModel):
 
 
 class PaginationMeta(APIModel):
-    """
-    Offset-based pagination metadata.
+    """Offset-based pagination metadata.
 
     Attributes:
         total_count: Total number of matching records.
@@ -82,8 +84,7 @@ class PaginationMeta(APIModel):
 
 
 class ErrorBody(APIModel):
-    """
-    Machine-readable and client-safe error information.
+    """Machine-readable and client-safe error information.
 
     Attributes:
         code: Stable application error identifier.
@@ -99,8 +100,7 @@ class ErrorBody(APIModel):
         cls,
         value: str,
     ) -> str:
-        """
-        Normalize and reject a blank error code.
+        """Normalize and reject a blank error code.
 
         Args:
             value: Raw error code.
@@ -111,7 +111,6 @@ class ErrorBody(APIModel):
         Raises:
             ValueError: If the code is blank.
         """
-
         normalized = value.strip()
 
         if not normalized:
@@ -123,8 +122,7 @@ class ErrorBody(APIModel):
 
 
 class ResponseMeta(APIModel):
-    """
-    Operational metadata included in every JSON response.
+    """Operational metadata included in every JSON response.
 
     Attributes:
         request_id: Identifier for the current HTTP request.
@@ -137,7 +135,9 @@ class ResponseMeta(APIModel):
     request_id: str | None = None
     correlation_id: str | None = None
     api_version: str
-    timestamp: datetime = Field(default_factory=utc_now)
+    timestamp: datetime = Field(
+        default_factory=utc_now
+    )
     pagination: PaginationMeta | None = None
 
     @field_validator("api_version")
@@ -146,8 +146,7 @@ class ResponseMeta(APIModel):
         cls,
         value: str,
     ) -> str:
-        """
-        Normalize and reject a blank API version.
+        """Normalize and reject a blank API version.
 
         Args:
             value: API version obtained from request context.
@@ -158,7 +157,6 @@ class ResponseMeta(APIModel):
         Raises:
             ValueError: If the version is blank.
         """
-
         normalized = value.strip().strip("/")
 
         if not normalized:
@@ -170,8 +168,7 @@ class ResponseMeta(APIModel):
 
 
 class APIResponseModel[DataT](APIModel):
-    """
-    Stable response contract for successful and failed requests.
+    """Stable response contract for successful and failed requests.
 
     Type Parameters:
         DataT: Type of the successful response payload.
@@ -189,8 +186,7 @@ class APIResponseModel[DataT](APIModel):
         cls,
         value: str,
     ) -> str:
-        """
-        Normalize and reject a blank response message.
+        """Normalize and reject a blank response message.
 
         Args:
             value: Response message.
@@ -201,7 +197,6 @@ class APIResponseModel[DataT](APIModel):
         Raises:
             ValueError: If the message is blank.
         """
-
         normalized = value.strip()
 
         if not normalized:
@@ -213,8 +208,7 @@ class APIResponseModel[DataT](APIModel):
 
 
 class APIResponse:
-    """
-    Build JSON responses using the canonical public API envelope.
+    """Build JSON responses using the canonical public API envelope.
 
     This class contains transport-level response construction only. Application
     and domain layers must not depend on it.
@@ -229,8 +223,7 @@ class APIResponse:
         pagination: PaginationMeta | None = None,
         headers: dict[str, str] | None = None,
     ) -> JSONResponse:
-        """
-        Create a successful JSON response.
+        """Create a successful JSON response.
 
         Args:
             message: Human-readable success message.
@@ -245,13 +238,16 @@ class APIResponse:
         Raises:
             ValueError: If the status code cannot contain this response body.
         """
-
         if status_code == status.HTTP_204_NO_CONTENT:
             raise ValueError(
                 "Use an empty Response for HTTP 204"
             )
 
-        if not status.HTTP_200_OK <= status_code < 400:
+        if not (
+            _HTTP_SUCCESS_MIN
+            <= status_code
+            < _HTTP_SUCCESS_MAX_EXCLUSIVE
+        ):
             raise ValueError(
                 "Success status_code must be between 200 and 399"
             )
@@ -276,7 +272,9 @@ class APIResponse:
             headers=headers,
         )
 
-        APIResponse._attach_context_headers(response)
+        APIResponse._attach_context_headers(
+            response
+        )
 
         return response
 
@@ -285,14 +283,11 @@ class APIResponse:
         *,
         error_code: str,
         message: str,
-        status_code: int = (
-            status.HTTP_500_INTERNAL_SERVER_ERROR
-        ),
+        status_code: int = status.HTTP_500_INTERNAL_SERVER_ERROR,
         details: Any | None = None,
         headers: dict[str, str] | None = None,
     ) -> JSONResponse:
-        """
-        Create a standardized client-safe error response.
+        """Create a standardized client-safe error response.
 
         Args:
             error_code: Stable machine-readable error identifier.
@@ -307,8 +302,11 @@ class APIResponse:
         Raises:
             ValueError: If the status code is outside the HTTP error range.
         """
-
-        if not 400 <= status_code <= 599:
+        if not (
+            _HTTP_ERROR_MIN
+            <= status_code
+            <= _HTTP_ERROR_MAX
+        ):
             raise ValueError(
                 "Error status_code must be between 400 and 599"
             )
@@ -334,14 +332,14 @@ class APIResponse:
             headers=headers,
         )
 
-        # Error responses should not be cached by browsers, gateways, or shared
-        # proxies unless an endpoint explicitly implements another policy.
         response.headers.setdefault(
             "Cache-Control",
             "no-store",
         )
 
-        APIResponse._attach_context_headers(response)
+        APIResponse._attach_context_headers(
+            response
+        )
 
         return response
 
@@ -350,8 +348,7 @@ class APIResponse:
         *,
         pagination: PaginationMeta | None = None,
     ) -> ResponseMeta:
-        """
-        Build response metadata from the current execution context.
+        """Build response metadata from the current execution context.
 
         Args:
             pagination: Optional pagination metadata.
@@ -359,7 +356,6 @@ class APIResponse:
         Returns:
             Response metadata populated from context variables.
         """
-
         return ResponseMeta(
             request_id=get_request_id(),
             correlation_id=get_correlation_id(),
@@ -371,17 +367,15 @@ class APIResponse:
     def _attach_context_headers(
         response: JSONResponse,
     ) -> None:
-        """
-        Attach request and correlation identifiers to response headers.
+        """Attach request and correlation identifiers to response headers.
 
         The request-context middleware also performs this operation. Keeping it
         here ensures responses constructed outside the normal middleware path,
-        including some tests and internal calls, remain consistent.
+        including tests and internal calls, remain consistent.
 
         Args:
             response: Response receiving context headers.
         """
-
         request_id = get_request_id()
         correlation_id = get_correlation_id()
 

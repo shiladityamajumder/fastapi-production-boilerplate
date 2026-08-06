@@ -1,5 +1,4 @@
-"""
-File: app/common/sorting.py
+"""File: app/common/sorting.py.
 
 Allow-listed SQLAlchemy sorting helpers.
 
@@ -10,7 +9,10 @@ must never be passed directly from request input.
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import (  # noqa: TC003
+    Mapping,
+    Sequence,
+)
 from enum import StrEnum
 from typing import Any
 
@@ -22,7 +24,6 @@ from sqlalchemy.sql.elements import (
 )
 
 from app.common.exceptions import ValidationError
-
 
 type SQLColumn = (
     ColumnElement[Any]
@@ -43,8 +44,7 @@ class SortOrder(StrEnum):
 def normalize_sort_order(
     value: str | SortOrder | None,
 ) -> SortOrder:
-    """
-    Normalize and validate a sorting direction.
+    """Normalize and validate a sorting direction.
 
     Args:
         value: Raw direction or an existing ``SortOrder``.
@@ -55,7 +55,6 @@ def normalize_sort_order(
     Raises:
         ValidationError: If the direction is unsupported.
     """
-
     if value is None:
         return SortOrder.ASC
 
@@ -84,8 +83,7 @@ def build_order_expression(
     column: SQLColumn,
     sort_order: str | SortOrder = SortOrder.ASC,
 ) -> SQLOrderExpression:
-    """
-    Build an ascending or descending SQLAlchemy expression.
+    """Build an ascending or descending SQLAlchemy expression.
 
     Args:
         column: Allow-listed SQLAlchemy column or expression.
@@ -94,7 +92,6 @@ def build_order_expression(
     Returns:
         SQLAlchemy order expression.
     """
-
     normalized_order = normalize_sort_order(
         sort_order
     )
@@ -113,8 +110,7 @@ def apply_sorting(
     allowed_fields: Mapping[str, SQLColumn],
     strict: bool = True,
 ) -> SQLSelect:
-    """
-    Apply one allow-listed sorting field.
+    """Apply one allow-listed sorting field.
 
     Args:
         statement: Base SQLAlchemy select statement.
@@ -129,7 +125,6 @@ def apply_sorting(
     Raises:
         ValidationError: If the field or direction is unsupported.
     """
-
     normalized_field = _normalize_sort_field(
         sort_by
     )
@@ -173,8 +168,7 @@ def apply_multi_sorting(
     allowed_fields: Mapping[str, SQLColumn],
     strict: bool = True,
 ) -> SQLSelect:
-    """
-    Apply ordered, allow-listed multi-column sorting.
+    """Apply ordered, allow-listed multi-column sorting.
 
     Duplicate public fields are ignored after their first occurrence to avoid
     conflicting order expressions.
@@ -191,7 +185,6 @@ def apply_multi_sorting(
     Raises:
         ValidationError: If a field or direction is unsupported.
     """
-
     if not sorting:
         return statement
 
@@ -203,7 +196,10 @@ def apply_multi_sorting(
             raw_field
         )
 
-        if field is None or field in seen_fields:
+        if (
+            field is None
+            or field in seen_fields
+        ):
             continue
 
         seen_fields.add(field)
@@ -245,8 +241,7 @@ def apply_default_sort(
     default_column: SQLColumn,
     default_order: str | SortOrder = SortOrder.DESC,
 ) -> SQLSelect:
-    """
-    Apply a deterministic default order.
+    """Apply a deterministic default order.
 
     When the default column is not unique, repositories should add a unique
     secondary sort column to guarantee stable offset pagination.
@@ -259,7 +254,6 @@ def apply_default_sort(
     Returns:
         Statement with the default order applied.
     """
-
     return statement.order_by(
         build_order_expression(
             column=default_column,
@@ -271,12 +265,19 @@ def apply_default_sort(
 def _normalize_sort_field(
     value: str | None,
 ) -> str | None:
-    """Normalize an optional public sorting field."""
+    """Normalize an optional public sorting field.
 
+    Args:
+        value: Raw public sorting field.
+
+    Returns:
+        Stripped field name or ``None``.
+    """
     if value is None:
         return None
 
     normalized = value.strip()
+
     return normalized or None
 
 

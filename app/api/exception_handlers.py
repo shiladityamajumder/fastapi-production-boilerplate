@@ -1,5 +1,4 @@
-"""
-File: app/api/exception_handlers.py
+"""File: app/api/exception_handlers.py.
 
 Central HTTP translation for application and framework exceptions.
 
@@ -12,7 +11,7 @@ details.
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
-from typing import Any, cast
+from typing import cast
 
 from fastapi import (
     FastAPI,
@@ -42,7 +41,6 @@ from app.common.exceptions import (
 from app.common.response import APIResponse
 from app.core.logging import get_logger
 
-
 logger = get_logger(__name__)
 
 
@@ -50,6 +48,9 @@ ExceptionHandler = Callable[
     [Request, Exception],
     Awaitable[JSONResponse],
 ]
+
+
+_HTTP_SERVER_ERROR_MIN = status.HTTP_500_INTERNAL_SERVER_ERROR
 
 
 # More-specific exception classes must appear before their parent classes.
@@ -115,15 +116,9 @@ _HTTP_ERROR_CODES: dict[int, str] = {
     status.HTTP_409_CONFLICT: "RESOURCE_CONFLICT",
     status.HTTP_410_GONE: "RESOURCE_GONE",
     status.HTTP_413_REQUEST_ENTITY_TOO_LARGE: "PAYLOAD_TOO_LARGE",
-    status.HTTP_415_UNSUPPORTED_MEDIA_TYPE: (
-        "UNSUPPORTED_MEDIA_TYPE"
-    ),
-    status.HTTP_422_UNPROCESSABLE_CONTENT: (
-        "UNPROCESSABLE_CONTENT"
-    ),
-    status.HTTP_503_SERVICE_UNAVAILABLE: (
-        "SERVICE_UNAVAILABLE"
-    ),
+    status.HTTP_415_UNSUPPORTED_MEDIA_TYPE: "UNSUPPORTED_MEDIA_TYPE",
+    status.HTTP_422_UNPROCESSABLE_CONTENT: "UNPROCESSABLE_CONTENT",
+    status.HTTP_503_SERVICE_UNAVAILABLE: "SERVICE_UNAVAILABLE",
     status.HTTP_504_GATEWAY_TIMEOUT: "GATEWAY_TIMEOUT",
 }
 
@@ -131,8 +126,7 @@ _HTTP_ERROR_CODES: dict[int, str] = {
 def _route_template(
     request: Request,
 ) -> str:
-    """
-    Return the matched route template without exposing raw path parameters.
+    """Return the matched route template without exposing raw path parameters.
 
     Args:
         request: Current FastAPI request.
@@ -140,9 +134,12 @@ def _route_template(
     Returns:
         Matched route template or ``"unmatched"``.
     """
-
     route = request.scope.get("route")
-    path = getattr(route, "path", None)
+    path = getattr(
+        route,
+        "path",
+        None,
+    )
 
     if isinstance(path, str) and path:
         return path
@@ -153,8 +150,7 @@ def _route_template(
 def _status_for(
     error: AppError,
 ) -> int:
-    """
-    Resolve the public HTTP status for an application exception.
+    """Resolve the public HTTP status for an application exception.
 
     Args:
         error: Expected application exception.
@@ -162,9 +158,11 @@ def _status_for(
     Returns:
         HTTP status code.
     """
-
     for error_type, status_code in _ERROR_STATUS:
-        if isinstance(error, error_type):
+        if isinstance(
+            error,
+            error_type,
+        ):
             return status_code
 
     # Unmapped expected application or domain errors represent client-side
@@ -178,14 +176,17 @@ def _log_expected_error(
     error: AppError,
     status_code: int,
 ) -> None:
-    """
-    Log an expected application failure at an appropriate severity.
+    """Log an expected application failure at an appropriate severity.
 
     Validation and missing-resource cases are routine client outcomes and use
     INFO. Conflicts and permission failures use WARNING. Infrastructure failures
     use ERROR because they generally require operational attention.
-    """
 
+    Args:
+        request: Current FastAPI request.
+        error: Expected application exception.
+        status_code: Resolved public HTTP status code.
+    """
     context = {
         "error_code": error.code,
         "http_status_code": status_code,
@@ -194,11 +195,12 @@ def _log_expected_error(
         "exception_type": type(error).__name__,
     }
 
-    if status_code >= 500:
+    if status_code >= _HTTP_SERVER_ERROR_MIN:
         logger.error(
             "Expected infrastructure or dependency failure",
             extra=context,
         )
+
     elif status_code in {
         status.HTTP_401_UNAUTHORIZED,
         status.HTTP_403_FORBIDDEN,
@@ -208,6 +210,7 @@ def _log_expected_error(
             "Expected application request rejected",
             extra=context,
         )
+
     else:
         logger.info(
             "Expected application request rejected",
@@ -219,8 +222,7 @@ async def app_error_handler(
     request: Request,
     exc: Exception,
 ) -> JSONResponse:
-    """
-    Translate an expected application error into a safe HTTP response.
+    """Translate an expected application error into a safe HTTP response.
 
     Args:
         request: Current FastAPI request.
@@ -229,9 +231,14 @@ async def app_error_handler(
     Returns:
         Canonical JSON error response.
     """
+    error = cast(
+        "AppError",
+        exc,
+    )
 
-    error = cast(AppError, exc)
-    status_code = _status_for(error)
+    status_code = _status_for(
+        error,
+    )
 
     _log_expected_error(
         request=request,
@@ -251,8 +258,7 @@ async def validation_exception_handler(
     request: Request,
     exc: Exception,
 ) -> JSONResponse:
-    """
-    Sanitize FastAPI and Pydantic request-validation failures.
+    """Sanitize FastAPI and Pydantic request-validation failures.
 
     Only field location, validation type, and a safe validation message are
     exposed. Rejected values and Pydantic context are intentionally omitted
@@ -265,9 +271,8 @@ async def validation_exception_handler(
     Returns:
         Canonical HTTP 422 response.
     """
-
     validation_error = cast(
-        RequestValidationError,
+        "RequestValidationError",
         exc,
     )
 
@@ -276,8 +281,17 @@ async def validation_exception_handler(
     for item in validation_error.errors():
         location = [
             str(part)
-            for part in item.get("loc", ())
-            if str(part) not in {"body", "query", "path", "header"}
+            for part in item.get(
+                "loc",
+                (),
+            )
+            if str(part)
+            not in {
+                "body",
+                "query",
+                "path",
+                "header",
+            }
         ]
 
         field = ".".join(location) or "request"
@@ -321,8 +335,7 @@ async def http_exception_handler(
     request: Request,
     exc: Exception,
 ) -> JSONResponse:
-    """
-    Normalize framework-generated HTTP exceptions.
+    """Normalize framework-generated HTTP exceptions.
 
     Args:
         request: Current FastAPI request.
@@ -331,9 +344,8 @@ async def http_exception_handler(
     Returns:
         Canonical JSON error response.
     """
-
     http_error = cast(
-        StarletteHTTPException,
+        "StarletteHTTPException",
         exc,
     )
 
@@ -342,7 +354,7 @@ async def http_exception_handler(
         "HTTP_ERROR",
     )
 
-    if http_error.status_code >= 500:
+    if http_error.status_code >= _HTTP_SERVER_ERROR_MIN:
         message = "An unexpected server error occurred."
 
         logger.error(
@@ -354,7 +366,11 @@ async def http_exception_handler(
                 "http_route": _route_template(request),
             },
         )
-    elif isinstance(http_error.detail, str):
+
+    elif isinstance(
+        http_error.detail,
+        str,
+    ):
         normalized_detail = http_error.detail.strip()
 
         message = (
@@ -362,6 +378,7 @@ async def http_exception_handler(
             if normalized_detail
             else "The request could not be processed."
         )
+
     else:
         message = "The request could not be processed."
 
@@ -369,7 +386,9 @@ async def http_exception_handler(
         error_code=error_code,
         message=message,
         status_code=http_error.status_code,
-        headers=dict(http_error.headers or {}),
+        headers=dict(
+            http_error.headers or {}
+        ),
     )
 
 
@@ -377,8 +396,7 @@ async def unhandled_exception_handler(
     request: Request,
     exc: Exception,
 ) -> JSONResponse:
-    """
-    Log an unexpected failure and return a non-leaking HTTP 500 response.
+    """Log an unexpected failure and return a non-leaking HTTP 500 response.
 
     Args:
         request: Current FastAPI request.
@@ -387,7 +405,6 @@ async def unhandled_exception_handler(
     Returns:
         Canonical internal-server-error response.
     """
-
     logger.error(
         "Unhandled application exception",
         extra={
@@ -412,13 +429,11 @@ async def unhandled_exception_handler(
 def register_exception_handlers(
     app: FastAPI,
 ) -> None:
-    """
-    Register centralized exception handlers on a FastAPI application.
+    """Register centralized exception handlers on a FastAPI application.
 
     Args:
         app: Application instance receiving the handlers.
     """
-
     handlers: tuple[
         tuple[type[Exception], ExceptionHandler],
         ...,

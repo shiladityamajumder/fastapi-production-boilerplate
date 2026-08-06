@@ -1,5 +1,4 @@
-"""
-File: app/db/registry.py
+"""File: app/db/registry.py.
 
 Lifecycle registry for configured database and cache adapters.
 
@@ -27,7 +26,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from collections.abc import Mapping
+from collections.abc import Mapping  # noqa: TC003
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Protocol, runtime_checkable
@@ -35,10 +34,9 @@ from typing import Protocol, runtime_checkable
 from app.common.exceptions import (
     InfrastructureUnavailableError,
 )
-from app.core.config import AppSettings
+from app.core.config import AppSettings  # noqa: TC001
 from app.core.logging import get_logger
 from app.db.mysql import MySQLDatabase
-
 
 # =============================================================================
 # OPTIONAL DATABASE AND CACHE IMPORTS
@@ -144,26 +142,22 @@ logger = get_logger(__name__)
 
 @runtime_checkable
 class InfrastructureAdapter(Protocol):
-    """
-    Minimal lifecycle contract implemented by infrastructure adapters.
+    """Minimal lifecycle contract implemented by infrastructure adapters.
 
     Every active adapter owns its engine, client, or connection pool and must
     validate and release those resources through this contract.
     """
 
     async def ping(self) -> None:
-        """
-        Validate dependency connectivity.
+        """Validate dependency connectivity.
 
         Raises:
             Exception: If the dependency cannot be reached.
         """
-
         ...
 
     async def close(self) -> None:
         """Release resources owned by the adapter."""
-
         ...
 
 
@@ -172,8 +166,7 @@ class InfrastructureAdapter(Protocol):
     slots=True,
 )
 class HealthStatus:
-    """
-    Sanitized health result for an active infrastructure adapter.
+    """Sanitized health result for an active infrastructure adapter.
 
     Attributes:
         healthy: Whether the adapter responded successfully.
@@ -185,8 +178,7 @@ class HealthStatus:
 
 
 class DatabaseRegistry:
-    """
-    Own infrastructure adapters configured for the current process.
+    """Own infrastructure adapters configured for the current process.
 
     MySQL is currently active. Other adapter implementations remain in this
     file as commented reference blocks and create no imports, clients, engines,
@@ -200,14 +192,12 @@ class DatabaseRegistry:
         self,
         *,
         mysql: MySQLDatabase | None = None,
-
         # ---------------------------------------------------------------------
         # MICROSOFT SQL SERVER
         #
         # Uncomment together with the MSSQL import and all MSSQL blocks below.
         # ---------------------------------------------------------------------
         # mssql: MSSQLDatabase | None = None,
-
         # ---------------------------------------------------------------------
         # POSTGRESQL
         #
@@ -215,7 +205,6 @@ class DatabaseRegistry:
         # blocks below.
         # ---------------------------------------------------------------------
         # postgres: PostgreSQLDatabase | None = None,
-
         # ---------------------------------------------------------------------
         # MONGODB
         #
@@ -223,7 +212,6 @@ class DatabaseRegistry:
         # below.
         # ---------------------------------------------------------------------
         # mongo: MongoDatabase | None = None,
-
         # ---------------------------------------------------------------------
         # REDIS
         #
@@ -231,8 +219,7 @@ class DatabaseRegistry:
         # ---------------------------------------------------------------------
         # redis: RedisClient | None = None,
     ) -> None:
-        """
-        Initialize the infrastructure registry.
+        """Initialize the infrastructure registry.
 
         Args:
             mysql: Optional active MySQL adapter.
@@ -240,7 +227,6 @@ class DatabaseRegistry:
         Optional constructor arguments for MSSQL, PostgreSQL, MongoDB, and Redis
         are retained as commented reference blocks.
         """
-
         self.mysql = mysql
 
         # ---------------------------------------------------------------------
@@ -268,8 +254,7 @@ class DatabaseRegistry:
         cls,
         settings: AppSettings,
     ) -> DatabaseRegistry:
-        """
-        Construct active infrastructure adapters from configuration.
+        """Construct active infrastructure adapters from configuration.
 
         MySQL is currently the only active integration.
 
@@ -283,14 +268,10 @@ class DatabaseRegistry:
         Raises:
             RuntimeError: If MySQL is enabled but incompletely configured.
         """
-
         return cls(
             mysql=(
-                MySQLDatabase.from_settings(settings)
-                if settings.ENABLE_MYSQL
-                else None
+                MySQLDatabase.from_settings(settings) if settings.ENABLE_MYSQL else None
             ),
-
             # -----------------------------------------------------------------
             # MICROSOFT SQL SERVER
             #
@@ -306,7 +287,6 @@ class DatabaseRegistry:
             #     if settings.ENABLE_MSSQL
             #     else None
             # ),
-
             # -----------------------------------------------------------------
             # POSTGRESQL
             #
@@ -322,7 +302,6 @@ class DatabaseRegistry:
             #     if settings.ENABLE_POSTGRES
             #     else None
             # ),
-
             # -----------------------------------------------------------------
             # MONGODB
             #
@@ -338,7 +317,6 @@ class DatabaseRegistry:
             #     if settings.ENABLE_MONGO
             #     else None
             # ),
-
             # -----------------------------------------------------------------
             # REDIS
             #
@@ -360,8 +338,7 @@ class DatabaseRegistry:
     def adapters(
         self,
     ) -> Mapping[str, InfrastructureAdapter]:
-        """
-        Return active adapters in deterministic lifecycle order.
+        """Return active adapters in deterministic lifecycle order.
 
         Only active, initialized adapters are included. Health checks and
         shutdown operations use this mapping, so commented integrations are
@@ -370,7 +347,6 @@ class DatabaseRegistry:
         Returns:
             Read-only mapping of adapter names to instances.
         """
-
         configured: dict[
             str,
             InfrastructureAdapter,
@@ -411,32 +387,25 @@ class DatabaseRegistry:
         # if self.redis is not None:
         #     configured["redis"] = self.redis
 
-        return MappingProxyType(
-            configured
-        )
+        return MappingProxyType(configured)
 
     @property
     def adapter_names(
         self,
     ) -> tuple[str, ...]:
-        """
-        Return active adapter names.
+        """Return active adapter names.
 
         Returns:
             Adapter names in lifecycle order.
         """
-
-        return tuple(
-            self.adapters
-        )
+        return tuple(self.adapters)
 
     async def check_all(
         self,
         *,
         timeout_seconds: float,
     ) -> dict[str, HealthStatus]:
-        """
-        Check all active dependencies concurrently.
+        """Check all active dependencies concurrently.
 
         Each active adapter receives an independent timeout. Disabled or
         commented integrations are not imported, initialized, or checked.
@@ -453,18 +422,14 @@ class DatabaseRegistry:
         Raises:
             ValueError: If ``timeout_seconds`` is not positive.
         """
-
         if timeout_seconds <= 0:
-            raise ValueError(
-                "timeout_seconds must be greater than zero"
-            )
+            raise ValueError("timeout_seconds must be greater than zero")
 
         async def check_adapter(
             name: str,
             adapter: InfrastructureAdapter,
         ) -> tuple[str, HealthStatus]:
-            """
-            Check one active adapter.
+            """Check one active adapter.
 
             Args:
                 name: Registered adapter name.
@@ -473,14 +438,11 @@ class DatabaseRegistry:
             Returns:
                 Adapter name and sanitized health result.
             """
-
             started_at = time.perf_counter()
             healthy = True
 
             try:
-                async with asyncio.timeout(
-                    timeout_seconds
-                ):
+                async with asyncio.timeout(timeout_seconds):
                     await adapter.ping()
 
             except Exception:
@@ -495,11 +457,7 @@ class DatabaseRegistry:
                 )
 
             duration_ms = round(
-                (
-                    time.perf_counter()
-                    - started_at
-                )
-                * 1_000,
+                (time.perf_counter() - started_at) * 1_000,
                 2,
             )
 
@@ -522,22 +480,18 @@ class DatabaseRegistry:
                     name,
                     adapter,
                 )
-                for name, adapter
-                in configured_adapters.items()
+                for name, adapter in configured_adapters.items()
             )
         )
 
-        return dict(
-            results
-        )
+        return dict(results)
 
     async def ping_all(
         self,
         *,
         timeout_seconds: float,
     ) -> None:
-        """
-        Validate every active dependency during process startup.
+        """Validate every active dependency during process startup.
 
         A process must not report ready when an active dependency is
         unavailable. Commented integrations do not participate in startup
@@ -551,54 +505,40 @@ class DatabaseRegistry:
             InfrastructureUnavailableError: If one or more active adapters
                 fail.
         """
-
         checks = await self.check_all(
             timeout_seconds=timeout_seconds,
         )
 
-        unavailable = [
-            name
-            for name, result in checks.items()
-            if not result.healthy
-        ]
+        unavailable = [name for name, result in checks.items() if not result.healthy]
 
         if unavailable:
             raise InfrastructureUnavailableError(
-                message=(
-                    "Required infrastructure failed startup validation."
-                ),
+                message=("Required infrastructure failed startup validation."),
                 details={
                     "dependencies": unavailable,
                 },
             )
 
     async def close(self) -> None:
-        """
-        Close active adapters in reverse lifecycle order.
+        """Close active adapters in reverse lifecycle order.
 
         Shutdown continues when one adapter fails so all remaining resources
         still receive a cleanup attempt.
 
         Commented integrations produce no shutdown behavior.
         """
+        configured_adapters = tuple(self.adapters.items())
 
-        configured_adapters = tuple(
-            self.adapters.items()
-        )
-
-        for name, adapter in reversed(
-            configured_adapters
-        ):
+        for name, adapter in reversed(configured_adapters):
             try:
                 await adapter.close()
 
             except Exception:
-                logger.error(
+                logger.exception(
                     "Infrastructure adapter shutdown failed",
                     extra={
                         "adapter": name,
                     },
-                    exc_info=True,
                 )
 
 

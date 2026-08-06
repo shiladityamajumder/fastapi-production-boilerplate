@@ -1,5 +1,4 @@
-"""
-File: app/common/execution.py
+"""File: app/common/execution.py.
 
 Reusable execution helpers for observable and optionally bounded asynchronous
 operations.
@@ -16,7 +15,11 @@ from __future__ import annotations
 
 import asyncio
 import time
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import (  # noqa: TC003
+    Awaitable,
+    Callable,
+    Mapping,
+)
 from typing import Any
 
 from app.common.exceptions import (
@@ -27,7 +30,6 @@ from app.core.logging import (
     get_logger,
     sanitize_log_value,
 )
-
 
 logger = get_logger(__name__)
 
@@ -40,8 +42,7 @@ async def execute_operation[T](
     timeout_seconds: float | None = None,
     context: Mapping[str, Any] | None = None,
 ) -> T:
-    """
-    Execute an asynchronous operation with timing and structured logging.
+    """Execute an asynchronous operation with timing and structured logging.
 
     Logging behavior:
 
@@ -68,24 +69,16 @@ async def execute_operation[T](
         AppError: Any expected application error raised by ``func``.
         Exception: Any unexpected error raised by ``func``.
     """
-
     normalized_operation = operation.strip()
     normalized_layer = layer.strip()
 
     if not normalized_operation:
-        raise ValueError(
-            "operation must not be blank"
-        )
+        raise ValueError("operation must not be blank")
 
     if not normalized_layer:
-        raise ValueError(
-            "layer must not be blank"
-        )
+        raise ValueError("layer must not be blank")
 
-    if (
-        timeout_seconds is not None
-        and timeout_seconds <= 0
-    ):
+    if timeout_seconds is not None and timeout_seconds <= 0:
         raise ValueError(
             "timeout_seconds must be greater than zero"
         )
@@ -110,7 +103,9 @@ async def execute_operation[T](
         if timeout_seconds is None:
             result = await func()
         else:
-            async with asyncio.timeout(timeout_seconds):
+            async with asyncio.timeout(
+                timeout_seconds
+            ):
                 result = await func()
 
     except TimeoutError as exc:
@@ -131,8 +126,8 @@ async def execute_operation[T](
 
         raise OperationTimeoutError(
             message=(
-                f"{normalized_operation} exceeded its allowed "
-                "execution time."
+                f"{normalized_operation} exceeded its "
+                "allowed execution time."
             ),
             details={
                 "operation": normalized_operation,
@@ -198,8 +193,7 @@ async def execute_with_timeout[T](
     layer: str = "application",
     context: Mapping[str, Any] | None = None,
 ) -> T:
-    """
-    Execute an asynchronous operation within an explicit deadline.
+    """Execute an asynchronous operation within an explicit deadline.
 
     This compatibility helper delegates to ``execute_operation``.
 
@@ -213,7 +207,6 @@ async def execute_with_timeout[T](
     Returns:
         Value returned by ``func``.
     """
-
     return await execute_operation(
         operation=operation,
         func=func,
@@ -226,8 +219,7 @@ async def execute_with_timeout[T](
 def _elapsed_milliseconds(
     started_at: float,
 ) -> float:
-    """
-    Return elapsed monotonic time in milliseconds.
+    """Return elapsed monotonic time in milliseconds.
 
     Args:
         started_at: Value returned by ``time.perf_counter``.
@@ -235,13 +227,8 @@ def _elapsed_milliseconds(
     Returns:
         Elapsed duration rounded to two decimal places.
     """
-
     return round(
-        (
-            time.perf_counter()
-            - started_at
-        )
-        * 1_000,
+        (time.perf_counter() - started_at) * 1_000,
         2,
     )
 

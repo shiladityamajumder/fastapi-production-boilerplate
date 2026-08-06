@@ -607,17 +607,13 @@ Never insert raw client-provided sort values into SQL.
 Bad:
 
 ```python
-statement.order_by(
-    text(sort_by)
-)
+statement.order_by(text(sort_by))
 ```
 
 Better:
 
 ```python
-sort_column = SORTABLE_FIELDS[
-    sort_by
-]
+sort_column = SORTABLE_FIELDS[sort_by]
 ```
 
 ---

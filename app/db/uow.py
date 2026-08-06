@@ -1,5 +1,4 @@
-"""
-File: app/db/uow.py
+"""File: app/db/uow.py.
 
 SQLAlchemy asynchronous Unit of Work.
 
@@ -20,24 +19,22 @@ exception escapes, and always closes the session.
 from __future__ import annotations
 
 from time import perf_counter
-from types import TracebackType
+from types import TracebackType  # noqa: TC003
 from typing import Any, Self
 
 from sqlalchemy.ext.asyncio import (
-    AsyncSession,
-    AsyncSessionTransaction,
-    async_sessionmaker,
+    AsyncSession,  # noqa: TC002
+    AsyncSessionTransaction,  # noqa: TC002
+    async_sessionmaker,  # noqa: TC002
 )
 
 from app.core.logging import get_logger
-
 
 logger = get_logger(__name__)
 
 
 class SQLAlchemyUnitOfWork:
-    """
-    Own one asynchronous SQLAlchemy session and transaction.
+    """Own one asynchronous SQLAlchemy session and transaction.
 
     The Unit of Work is intended primarily for write workflows requiring an
     explicit transaction boundary. Repositories receive ``uow.session`` only
@@ -50,20 +47,19 @@ class SQLAlchemyUnitOfWork:
         *,
         database_name: str = "relational",
     ) -> None:
-        """
-        Initialize a Unit of Work.
+        """Initialize a Unit of Work.
 
         Args:
             session_factory: Process-local SQLAlchemy async session factory.
             database_name: Safe logical database name used in logs.
-        """
 
+        Raises:
+            ValueError: If ``database_name`` is blank.
+        """
         normalized_database_name = database_name.strip()
 
         if not normalized_database_name:
-            raise ValueError(
-                "database_name must not be blank"
-            )
+            raise ValueError("database_name must not be blank")
 
         self._session_factory = session_factory
         self._database_name = normalized_database_name
@@ -74,8 +70,7 @@ class SQLAlchemyUnitOfWork:
 
     @property
     def session(self) -> AsyncSession:
-        """
-        Return the active SQLAlchemy session.
+        """Return the active SQLAlchemy session.
 
         Returns:
             Session owned by this Unit of Work.
@@ -84,7 +79,6 @@ class SQLAlchemyUnitOfWork:
             RuntimeError: If the Unit of Work has not been entered or has
                 already been closed.
         """
-
         if self._session is None:
             raise RuntimeError(
                 "The unit of work is not active. "
@@ -95,21 +89,15 @@ class SQLAlchemyUnitOfWork:
 
     @property
     def is_active(self) -> bool:
-        """
-        Return whether this Unit of Work owns an active transaction.
-        """
-
+        """Return whether this Unit of Work owns an active transaction."""
         return (
             self._session is not None
             and self._transaction is not None
             and self._transaction.is_active
         )
 
-    async def __aenter__(
-        self,
-    ) -> Self:
-        """
-        Create a session and begin one explicit transaction.
+    async def __aenter__(self) -> Self:
+        """Create a session and begin one explicit transaction.
 
         Returns:
             Active Unit of Work.
@@ -118,19 +106,17 @@ class SQLAlchemyUnitOfWork:
             RuntimeError: If the same instance is entered more than once.
             Exception: If session or transaction initialization fails.
         """
-
         await self.begin()
+
         return self
 
     async def begin(self) -> None:
-        """
-        Create the owned session and begin its transaction.
+        """Create the owned session and begin its transaction.
 
         Raises:
             RuntimeError: If this instance is already active.
             Exception: If SQLAlchemy cannot start the transaction.
         """
-
         if self._session is not None:
             raise RuntimeError(
                 "This unit of work has already been entered"
@@ -154,8 +140,7 @@ class SQLAlchemyUnitOfWork:
         )
 
     async def commit(self) -> None:
-        """
-        Commit the active transaction.
+        """Commit the active transaction.
 
         When commit fails, a rollback is attempted before the original commit
         error is re-raised.
@@ -164,7 +149,6 @@ class SQLAlchemyUnitOfWork:
             RuntimeError: If no transaction is active.
             Exception: If commit fails.
         """
-
         transaction = self._require_transaction()
 
         try:
@@ -178,25 +162,23 @@ class SQLAlchemyUnitOfWork:
                 },
             )
         except Exception:
-            logger.error(
+            logger.exception(
                 "Database transaction commit failed",
                 extra={
                     "database": self._database_name,
                     "duration_ms": self._duration_ms(),
                 },
-                exc_info=True,
             )
 
             try:
                 if self._session is not None:
                     await self._session.rollback()
             except Exception:
-                logger.error(
+                logger.exception(
                     "Rollback after commit failure also failed",
                     extra={
                         "database": self._database_name,
                     },
-                    exc_info=True,
                 )
 
             raise
@@ -204,14 +186,12 @@ class SQLAlchemyUnitOfWork:
             self._clear_transaction_state()
 
     async def rollback(self) -> None:
-        """
-        Roll back the active transaction.
+        """Roll back the active transaction.
 
         Raises:
             RuntimeError: If no transaction is active.
             Exception: If rollback fails.
         """
-
         transaction = self._require_transaction()
 
         try:
@@ -225,27 +205,25 @@ class SQLAlchemyUnitOfWork:
                 },
             )
         except Exception:
-            logger.error(
+            logger.exception(
                 "Database transaction rollback failed",
                 extra={
                     "database": self._database_name,
                     "duration_ms": self._duration_ms(),
                 },
-                exc_info=True,
             )
             raise
         finally:
             self._clear_transaction_state()
 
     async def flush(self) -> None:
-        """
-        Flush pending ORM changes without committing the transaction.
+        """Flush pending ORM changes without committing the transaction.
 
         Raises:
             RuntimeError: If no transaction is active.
         """
-
         self._require_transaction()
+
         await self.session.flush()
 
     async def refresh(
@@ -254,8 +232,7 @@ class SQLAlchemyUnitOfWork:
         *,
         attribute_names: list[str] | None = None,
     ) -> None:
-        """
-        Refresh an ORM instance inside the active transaction.
+        """Refresh an ORM instance inside the active transaction.
 
         Args:
             instance: SQLAlchemy ORM instance.
@@ -264,7 +241,6 @@ class SQLAlchemyUnitOfWork:
         Raises:
             RuntimeError: If no transaction is active.
         """
-
         self._require_transaction()
 
         await self.session.refresh(
@@ -273,18 +249,21 @@ class SQLAlchemyUnitOfWork:
         )
 
     async def close(self) -> None:
-        """
-        Roll back any active transaction and close the owned session.
+        """Roll back active work and close the owned session.
 
-        This method is safe to call more than once.
+        This method is safe to call more than once. A rollback failure is
+        logged, but session closure is still attempted.
         """
-
         if self.is_active:
             try:
                 await self.rollback()
             except Exception:
-                # Session closure must still be attempted after rollback failure.
-                pass
+                logger.exception(
+                    "Rollback failed while closing unit of work",
+                    extra={
+                        "database": self._database_name,
+                    },
+                )
 
         await self._close_session()
 
@@ -294,8 +273,7 @@ class SQLAlchemyUnitOfWork:
         exc: BaseException | None,
         traceback: TracebackType | None,
     ) -> None:
-        """
-        Commit successful work, roll back failed work, and close the session.
+        """Commit successful work, roll back failed work, and close the session.
 
         An exception raised inside the context remains the primary exception.
         A rollback or close failure is logged without replacing it.
@@ -305,7 +283,6 @@ class SQLAlchemyUnitOfWork:
             exc: Escaping exception instance.
             traceback: Escaping exception traceback.
         """
-
         _ = exc_type, traceback
 
         try:
@@ -316,46 +293,39 @@ class SQLAlchemyUnitOfWork:
                     try:
                         await self.rollback()
                     except Exception:
-                        logger.error(
+                        logger.exception(
                             "Rollback failed while another exception "
                             "was already active",
                             extra={
                                 "database": self._database_name,
-                                "original_exception_type": (
-                                    type(exc).__name__
-                                ),
+                                "original_exception_type": type(exc).__name__,
                             },
-                            exc_info=True,
                         )
         finally:
             try:
                 await self._close_session()
             except Exception:
                 if exc is not None:
-                    logger.error(
+                    logger.exception(
                         "Session close failed while another exception "
                         "was already active",
                         extra={
                             "database": self._database_name,
-                            "original_exception_type": (
-                                type(exc).__name__
-                            ),
+                            "original_exception_type": type(exc).__name__,
                         },
-                        exc_info=True,
                     )
                 else:
                     raise
 
-    def _require_transaction(
-        self,
-    ) -> AsyncSessionTransaction:
-        """
-        Return the active transaction.
+    def _require_transaction(self) -> AsyncSessionTransaction:
+        """Return the active transaction.
+
+        Returns:
+            Active SQLAlchemy asynchronous transaction.
 
         Raises:
             RuntimeError: If no transaction is active.
         """
-
         if (
             self._transaction is None
             or not self._transaction.is_active
@@ -368,28 +338,21 @@ class SQLAlchemyUnitOfWork:
 
     def _duration_ms(self) -> float | None:
         """Return elapsed transaction time in milliseconds."""
-
         if self._started_at is None:
             return None
 
         return round(
-            (
-                perf_counter()
-                - self._started_at
-            )
-            * 1_000,
+            (perf_counter() - self._started_at) * 1_000,
             2,
         )
 
     def _clear_transaction_state(self) -> None:
         """Clear transaction-specific internal state."""
-
         self._transaction = None
         self._started_at = None
 
     async def _close_session(self) -> None:
         """Close and clear the owned SQLAlchemy session."""
-
         session = self._session
 
         self._session = None

@@ -1,5 +1,4 @@
-"""
-File: app/db/sqlalchemy_types.py
+"""File: app/db/sqlalchemy_types.py.
 
 Cross-dialect UTC datetime type and audit-column factories.
 
@@ -21,12 +20,15 @@ from __future__ import annotations
 from datetime import datetime
 
 from sqlalchemy import DateTime
-from sqlalchemy.engine.interfaces import Dialect
+from sqlalchemy.engine.interfaces import Dialect  # noqa: TC002
 from sqlalchemy.orm import (
     MappedColumn,
     mapped_column,
 )
-from sqlalchemy.types import TypeDecorator
+from sqlalchemy.types import (
+    TypeDecorator,
+    TypeEngine,
+)
 
 from app.utils.datetime_utils import (
     UTC,
@@ -36,8 +38,7 @@ from app.utils.datetime_utils import (
 
 
 class UTCDateTime(TypeDecorator[datetime]):
-    """
-    Persist timezone-aware datetimes as naive UTC.
+    """Persist timezone-aware datetimes as naive UTC.
 
     Values returned by database drivers are restored as timezone-aware UTC
     datetimes.
@@ -49,16 +50,20 @@ class UTCDateTime(TypeDecorator[datetime]):
     def load_dialect_impl(
         self,
         dialect: Dialect,
-    ) -> DateTime:
-        """
-        Return the datetime type used for every supported SQL dialect.
+    ) -> TypeEngine[datetime]:
+        """Return the datetime type used for the active SQL dialect.
 
         A timezone-naive database type is used deliberately so all supported
         relational databases follow the same persistence contract.
-        """
 
+        Args:
+            dialect: Active SQLAlchemy database dialect.
+
+        Returns:
+            Dialect-specific SQLAlchemy datetime type.
+        """
         return dialect.type_descriptor(
-            DateTime(timezone=False)
+            DateTime(timezone=False),
         )
 
     def process_bind_param(
@@ -66,8 +71,7 @@ class UTCDateTime(TypeDecorator[datetime]):
         value: datetime | None,
         dialect: Dialect,
     ) -> datetime | None:
-        """
-        Normalize a timezone-aware value to naive UTC for persistence.
+        """Normalize a timezone-aware value to naive UTC for persistence.
 
         Args:
             value: Optional timezone-aware datetime.
@@ -79,7 +83,6 @@ class UTCDateTime(TypeDecorator[datetime]):
         Raises:
             ValueError: If the datetime is timezone-naive.
         """
-
         _ = dialect
 
         if value is None:
@@ -87,11 +90,11 @@ class UTCDateTime(TypeDecorator[datetime]):
 
         if value.tzinfo is None or value.utcoffset() is None:
             raise ValueError(
-                "UTCDateTime requires a timezone-aware datetime"
+                "UTCDateTime requires a timezone-aware datetime",
             )
 
         return to_utc(value).replace(
-            tzinfo=None
+            tzinfo=None,
         )
 
     def process_result_value(
@@ -99,8 +102,7 @@ class UTCDateTime(TypeDecorator[datetime]):
         value: datetime | None,
         dialect: Dialect,
     ) -> datetime | None:
-        """
-        Restore a database datetime as timezone-aware UTC.
+        """Restore a database datetime as timezone-aware UTC.
 
         Args:
             value: Optional datetime returned by the database driver.
@@ -109,7 +111,6 @@ class UTCDateTime(TypeDecorator[datetime]):
         Returns:
             Timezone-aware UTC datetime or ``None``.
         """
-
         _ = dialect
 
         if value is None:
@@ -117,25 +118,21 @@ class UTCDateTime(TypeDecorator[datetime]):
 
         if value.tzinfo is None or value.utcoffset() is None:
             return value.replace(
-                tzinfo=UTC
+                tzinfo=UTC,
             )
 
         return to_utc(value)
 
     @property
     def python_type(self) -> type[datetime]:
-        """
-        Return the Python type represented by this SQLAlchemy type.
-        """
-
+        """Return the Python type represented by this SQLAlchemy type."""
         return datetime
 
 
 def created_at_column(
     db_column_name: str | None = None,
 ) -> MappedColumn[datetime]:
-    """
-    Create a non-null creation timestamp column.
+    """Create a non-null creation timestamp column.
 
     The default is generated in timezone-aware UTC and normalized by
     ``UTCDateTime`` before persistence.
@@ -146,7 +143,6 @@ def created_at_column(
     Returns:
         Configured SQLAlchemy mapped column.
     """
-
     return mapped_column(
         db_column_name,
         UTCDateTime(),
@@ -158,8 +154,7 @@ def created_at_column(
 def updated_at_column(
     db_column_name: str | None = None,
 ) -> MappedColumn[datetime]:
-    """
-    Create a non-null last-updated timestamp column.
+    """Create a non-null last-updated timestamp column.
 
     The value is generated during inserts and ORM-managed updates.
 
@@ -169,7 +164,6 @@ def updated_at_column(
     Returns:
         Configured SQLAlchemy mapped column.
     """
-
     return mapped_column(
         db_column_name,
         UTCDateTime(),

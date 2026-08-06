@@ -179,9 +179,7 @@ async def test_create_product_rejects_duplicate_code() -> None:
         uow=FakeUnitOfWork(),
     )
 
-    with pytest.raises(
-        ResourceConflictError
-    ):
+    with pytest.raises(ResourceConflictError):
         await service.create_product(
             payload=CreateProductRequest(
                 code="ABC-100",
@@ -234,17 +232,13 @@ async def test_liveness_returns_success(
     Ensure liveness returns a successful response.
     """
 
-    transport = ASGITransport(
-        app=app
-    )
+    transport = ASGITransport(app=app)
 
     async with AsyncClient(
         transport=transport,
         base_url="http://test",
     ) as client:
-        response = await client.get(
-            "/health/live"
-        )
+        response = await client.get("/health/live")
 
     assert response.status_code == 200
 ```
@@ -497,9 +491,7 @@ async def test_product_service_returns_not_found() -> None:
     )
 
     # Act and Assert
-    with pytest.raises(
-        ResourceNotFoundError
-    ):
+    with pytest.raises(ResourceNotFoundError):
         await service.get_product(
             product_id=999,
         )
@@ -732,9 +724,7 @@ class FakeProductRepository:
         session: object,
         product_id: int,
     ) -> Product | None:
-        return self.products.get(
-            product_id
-        )
+        return self.products.get(product_id)
 ```
 
 Fakes are often clearer than deeply nested mocks.
@@ -779,10 +769,7 @@ async def test_repository_filters_by_warehouse(
         warehouse_id=2,
     )
 
-    assert all(
-        item.warehouse_id == 2
-        for item in result
-    )
+    assert all(item.warehouse_id == 2 for item in result)
 ```
 
 ---
@@ -832,9 +819,7 @@ async def test_uow_rolls_back_all_changes_when_second_operation_fails(
     Ensure partial writes are not persisted.
     """
 
-    with pytest.raises(
-        ExpectedDatabaseError
-    ):
+    with pytest.raises(ExpectedDatabaseError):
         async with uow:
             await repository.create_parent(
                 session=uow.session,
@@ -899,9 +884,7 @@ async def test_request_id_is_added_to_response(
     Ensure every response contains a request identifier.
     """
 
-    response = await client.get(
-        "/health/live"
-    )
+    response = await client.get("/health/live")
 
     assert "X-Request-ID" in response.headers
 ```
@@ -930,9 +913,7 @@ def test_mysql_url_is_required_when_mysql_is_enabled() -> None:
     Ensure MySQL cannot be enabled without a connection URL.
     """
 
-    with pytest.raises(
-        ValidationError
-    ):
+    with pytest.raises(ValidationError):
         AppSettings(
             ENABLE_MYSQL=True,
             MYSQL_URL=None,
@@ -1068,9 +1049,7 @@ FastAPI dependency overrides should isolate API tests from real infrastructure.
 Example:
 
 ```python
-app.dependency_overrides[
-    get_product_service
-] = get_fake_product_service
+app.dependency_overrides[get_product_service] = get_fake_product_service
 ```
 
 Always clean overrides after the test:
@@ -1115,9 +1094,7 @@ Example:
 async def client(
     app,
 ):
-    transport = ASGITransport(
-        app=app
-    )
+    transport = ASGITransport(app=app)
 
     async with AsyncClient(
         transport=transport,

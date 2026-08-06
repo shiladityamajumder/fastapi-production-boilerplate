@@ -1,5 +1,4 @@
-"""
-File: app/core/config.py
+"""File: app/core/config.py.
 
 Typed, immutable, environment-driven application configuration.
 
@@ -55,6 +54,12 @@ from pydantic_settings import (
     SettingsConfigDict,
 )
 
+# =============================================================================
+# CONFIGURATION LIMITS
+# =============================================================================
+
+_MAX_SQL_CONNECTIONS_PER_PROCESS = 200
+
 
 class Environment(StrEnum):
     """Supported application runtime environments."""
@@ -65,8 +70,7 @@ class Environment(StrEnum):
 
 
 class AppSettings(BaseSettings):
-    """
-    Validated process-level application settings.
+    """Validated process-level application settings.
 
     Settings are immutable after initialization. Infrastructure adapters should
     receive this object through dependency injection instead of reading
@@ -99,9 +103,10 @@ class AppSettings(BaseSettings):
     # SERVER
     # =========================================================================
 
-    # ASGI server bind address. This setting does not perform HTTP Host-header
-    # validation.
-    HOST: str = "0.0.0.0"
+    # ASGI server bind address. Binding to all interfaces is intentional for
+    # containerized and externally proxied deployments. This does not control
+    # HTTP Host-header validation.
+    HOST: str = "0.0.0.0"  # noqa: S104
 
     PORT: int = Field(
         default=8000,
@@ -424,8 +429,7 @@ class AppSettings(BaseSettings):
         cls,
         value: str,
     ) -> str:
-        """
-        Normalize and validate the versioned API path prefix.
+        """Normalize and validate the versioned API path prefix.
 
         Args:
             value: Configured API prefix.
@@ -436,23 +440,16 @@ class AppSettings(BaseSettings):
         Raises:
             ValueError: If the prefix is invalid.
         """
-
         normalized = value.strip()
 
         if not normalized:
-            raise ValueError(
-                "API_V1_STR must not be blank"
-            )
+            raise ValueError("API_V1_STR must not be blank")
 
         if not normalized.startswith("/"):
-            raise ValueError(
-                "API_V1_STR must start with '/'"
-            )
+            raise ValueError("API_V1_STR must start with '/'")
 
         if normalized == "/":
-            raise ValueError(
-                "API_V1_STR must not use the root path"
-            )
+            raise ValueError("API_V1_STR must not use the root path")
 
         if "?" in normalized or "#" in normalized:
             raise ValueError(
@@ -471,8 +468,7 @@ class AppSettings(BaseSettings):
         cls,
         value: str,
     ) -> str:
-        """
-        Normalize and validate required identifier settings.
+        """Normalize and validate required identifier settings.
 
         Args:
             value: Configured identifier.
@@ -483,13 +479,10 @@ class AppSettings(BaseSettings):
         Raises:
             ValueError: If the identifier is blank.
         """
-
         normalized = value.strip()
 
         if not normalized:
-            raise ValueError(
-                "value must not be blank"
-            )
+            raise ValueError("value must not be blank")
 
         return normalized
 
@@ -502,8 +495,7 @@ class AppSettings(BaseSettings):
         cls,
         value: object,
     ) -> list[str]:
-        """
-        Parse and normalize allowed CORS origins.
+        """Parse and normalize allowed CORS origins.
 
         Environment values may be supplied as:
 
@@ -518,9 +510,8 @@ class AppSettings(BaseSettings):
             Normalized and deduplicated origins.
 
         Raises:
-            ValueError: If the value cannot be interpreted as a string list.
+            TypeError: If the value is not a supported input type.
         """
-
         if value is None or value == "":
             return []
 
@@ -538,9 +529,9 @@ class AppSettings(BaseSettings):
             values = list(value)
 
         else:
-            raise ValueError(
-                "CORS_ALLOWED_ORIGINS must be a list or "
-                "comma-separated string"
+            raise TypeError(
+                "CORS_ALLOWED_ORIGINS must be a list, tuple, set, "
+                "or comma-separated string"
             )
 
         normalized = [
@@ -559,8 +550,7 @@ class AppSettings(BaseSettings):
         cls,
         value: str,
     ) -> str:
-        """
-        Normalize and validate the Python logging level.
+        """Normalize and validate the Python logging level.
 
         Args:
             value: Configured log level.
@@ -571,7 +561,6 @@ class AppSettings(BaseSettings):
         Raises:
             ValueError: If the level is unknown.
         """
-
         normalized = value.strip().upper()
 
         if normalized not in logging.getLevelNamesMapping():
@@ -587,8 +576,7 @@ class AppSettings(BaseSettings):
         cls,
         value: str,
     ) -> str:
-        """
-        Validate the configured IANA timezone.
+        """Validate the configured IANA timezone.
 
         Args:
             value: Configured timezone name.
@@ -599,13 +587,10 @@ class AppSettings(BaseSettings):
         Raises:
             ValueError: If the timezone is blank or invalid.
         """
-
         normalized = value.strip()
 
         if not normalized:
-            raise ValueError(
-                "TIMEZONE must not be blank"
-            )
+            raise ValueError("TIMEZONE must not be blank")
 
         try:
             ZoneInfo(normalized)
@@ -623,8 +608,7 @@ class AppSettings(BaseSettings):
         cls,
         value: str,
     ) -> str:
-        """
-        Normalize the ASGI server bind address.
+        """Normalize the ASGI server bind address.
 
         This setting controls where the server listens. It does not validate
         incoming HTTP Host headers.
@@ -638,13 +622,10 @@ class AppSettings(BaseSettings):
         Raises:
             ValueError: If the address is blank.
         """
-
         normalized = value.strip()
 
         if not normalized:
-            raise ValueError(
-                "HOST must not be blank"
-            )
+            raise ValueError("HOST must not be blank")
 
         return normalized
 
@@ -654,8 +635,7 @@ class AppSettings(BaseSettings):
         cls,
         value: str,
     ) -> str:
-        """
-        Normalize optional string configuration.
+        """Normalize optional string configuration.
 
         Args:
             value: Raw string value.
@@ -663,49 +643,7 @@ class AppSettings(BaseSettings):
         Returns:
             Stripped string value.
         """
-
         return value.strip()
-
-    # -------------------------------------------------------------------------
-    # POSTGRESQL FIELD VALIDATOR - COMMENTED REFERENCE
-    # -------------------------------------------------------------------------
-    #
-    # Add ``POSTGRES_APPLICATION_NAME`` to ``normalize_optional_strings`` when
-    # PostgreSQL support is enabled.
-
-    # -------------------------------------------------------------------------
-    # MONGODB FIELD VALIDATORS - COMMENTED REFERENCE
-    # -------------------------------------------------------------------------
-    #
-    # Uncomment when MongoDB support is enabled.
-    #
-    # @field_validator("MONGO_DB_NAME")
-    # @classmethod
-    # def normalize_optional_database_name(
-    #     cls,
-    #     value: str | None,
-    # ) -> str | None:
-    #     """Normalize an optional MongoDB database name."""
-    #
-    #     if value is None:
-    #         return None
-    #
-    #     normalized = value.strip()
-    #     return normalized or None
-    #
-    #
-    # @field_validator(
-    #     "MONGO_READ_PREFERENCE",
-    #     "MONGO_WRITE_CONCERN",
-    # )
-    # @classmethod
-    # def normalize_mongo_strings(
-    #     cls,
-    #     value: str,
-    # ) -> str:
-    #     """Normalize MongoDB string settings."""
-    #
-    #     return value.strip()
 
     # =========================================================================
     # CROSS-FIELD VALIDATION
@@ -715,33 +653,16 @@ class AppSettings(BaseSettings):
     def validate_cross_field_rules(
         self,
     ) -> AppSettings:
-        """
-        Validate integration dependencies and production safety rules.
+        """Validate integration dependencies and production safety rules.
 
         Returns:
             Validated settings instance.
         """
-
         self._validate_database_pool_configuration()
         self._validate_mysql_configuration()
 
-        # ---------------------------------------------------------------------
-        # OPTIONAL DATABASE VALIDATION
-        #
-        # Uncomment a validation call only after enabling the corresponding
-        # settings and implementation blocks.
-        # ---------------------------------------------------------------------
-        # self._validate_mssql_configuration()
-        # self._validate_postgres_configuration()
-        # self._validate_mongo_configuration()
-        # self._validate_redis_configuration()
-
-        # ---------------------------------------------------------------------
-        # CELERY VALIDATION
-        #
-        # Uncomment only after Celery configuration and task files are enabled.
-        # ---------------------------------------------------------------------
-        # self._validate_background_jobs_configuration()
+        # Optional database and cache validation calls belong here when their
+        # respective integrations are enabled.
 
         self._validate_cors_configuration()
         self._validate_proxy_configuration()
@@ -752,35 +673,34 @@ class AppSettings(BaseSettings):
     def _validate_database_pool_configuration(
         self,
     ) -> None:
-        """
-        Prevent unexpectedly large SQL connection pools per process.
+        """Prevent unexpectedly large SQL connection pools per process.
 
         Raises:
             ValueError: If the configured maximum exceeds the allowed limit.
         """
-
         maximum_connections = (
             self.SQL_POOL_SIZE
             + self.SQL_MAX_OVERFLOW
         )
 
-        if maximum_connections > 200:
+        if (
+            maximum_connections
+            > _MAX_SQL_CONNECTIONS_PER_PROCESS
+        ):
             raise ValueError(
                 "SQL_POOL_SIZE plus SQL_MAX_OVERFLOW must not exceed "
-                "200 connections per process"
+                f"{_MAX_SQL_CONNECTIONS_PER_PROCESS} connections per process"
             )
 
     def _validate_mysql_configuration(
         self,
     ) -> None:
-        """
-        Validate MySQL configuration when MySQL is enabled.
+        """Validate MySQL configuration when MySQL is enabled.
 
         Raises:
             ValueError: If the URL is missing, invalid, or uses an unsupported
                 asynchronous driver.
         """
-
         if not self.ENABLE_MYSQL:
             return
 
@@ -801,203 +721,14 @@ class AppSettings(BaseSettings):
             ),
         )
 
-    # =========================================================================
-    # MICROSOFT SQL SERVER VALIDATION - COMMENTED REFERENCE
-    # =========================================================================
-    #
-    # def _validate_mssql_configuration(
-    #     self,
-    # ) -> None:
-    #     """Validate Microsoft SQL Server configuration when enabled."""
-    #
-    #     if not self.ENABLE_MSSQL:
-    #         return
-    #
-    #     url = self._required_secret(
-    #         self.MSSQL_URL,
-    #         "MSSQL_URL",
-    #     )
-    #
-    #     self._validate_url_prefix(
-    #         value=url,
-    #         name="MSSQL_URL",
-    #         allowed_prefixes=(
-    #             "mssql+aioodbc://",
-    #         ),
-    #         message=(
-    #             "MSSQL_URL must use the mssql+aioodbc driver"
-    #         ),
-    #     )
-
-    # =========================================================================
-    # POSTGRESQL VALIDATION - COMMENTED REFERENCE
-    # =========================================================================
-    #
-    # def _validate_postgres_configuration(
-    #     self,
-    # ) -> None:
-    #     """Validate PostgreSQL configuration when enabled."""
-    #
-    #     if not self.ENABLE_POSTGRES:
-    #         return
-    #
-    #     url = self._required_secret(
-    #         self.POSTGRES_URL,
-    #         "POSTGRES_URL",
-    #     )
-    #
-    #     self._validate_url_prefix(
-    #         value=url,
-    #         name="POSTGRES_URL",
-    #         allowed_prefixes=(
-    #             "postgresql+asyncpg://",
-    #         ),
-    #         message=(
-    #             "POSTGRES_URL must use the postgresql+asyncpg driver"
-    #         ),
-    #     )
-
-    # =========================================================================
-    # MONGODB VALIDATION - COMMENTED REFERENCE
-    # =========================================================================
-    #
-    # def _validate_mongo_configuration(
-    #     self,
-    # ) -> None:
-    #     """Validate MongoDB configuration when enabled."""
-    #
-    #     if self.MONGO_MIN_POOL_SIZE > self.MONGO_MAX_POOL_SIZE:
-    #         raise ValueError(
-    #             "MONGO_MIN_POOL_SIZE cannot exceed MONGO_MAX_POOL_SIZE"
-    #         )
-    #
-    #     if not self.ENABLE_MONGO:
-    #         return
-    #
-    #     uri = self._required_secret(
-    #         self.MONGO_URI,
-    #         "MONGO_URI",
-    #     )
-    #
-    #     self._validate_url_prefix(
-    #         value=uri,
-    #         name="MONGO_URI",
-    #         allowed_prefixes=(
-    #             "mongodb://",
-    #             "mongodb+srv://",
-    #         ),
-    #         message=(
-    #             "MONGO_URI must be a MongoDB connection URI"
-    #         ),
-    #     )
-    #
-    #     if not self.MONGO_DB_NAME:
-    #         raise ValueError(
-    #             "MONGO_DB_NAME is required when MongoDB is enabled"
-    #         )
-    #
-    #     supported_read_preferences = {
-    #         "primary",
-    #         "primaryPreferred",
-    #         "secondary",
-    #         "secondaryPreferred",
-    #         "nearest",
-    #     }
-    #
-    #     if (
-    #         self.MONGO_READ_PREFERENCE
-    #         not in supported_read_preferences
-    #     ):
-    #         raise ValueError(
-    #             "MONGO_READ_PREFERENCE contains an unsupported value"
-    #         )
-    #
-    #     if self.MONGO_WRITE_CONCERN not in {
-    #         "1",
-    #         "majority",
-    #     }:
-    #         raise ValueError(
-    #             "MONGO_WRITE_CONCERN must be '1' or 'majority'"
-    #         )
-
-    # =========================================================================
-    # REDIS VALIDATION - COMMENTED REFERENCE
-    # =========================================================================
-    #
-    # def _validate_redis_configuration(
-    #     self,
-    # ) -> None:
-    #     """Validate Redis configuration when enabled."""
-    #
-    #     if not self.ENABLE_REDIS:
-    #         return
-    #
-    #     url = self._required_secret(
-    #         self.REDIS_URL,
-    #         "REDIS_URL",
-    #     )
-    #
-    #     self._validate_url_prefix(
-    #         value=url,
-    #         name="REDIS_URL",
-    #         allowed_prefixes=(
-    #             "redis://",
-    #             "rediss://",
-    #         ),
-    #         message=(
-    #             "REDIS_URL must use redis:// or rediss://"
-    #         ),
-    #     )
-
-    # =========================================================================
-    # CELERY VALIDATION - COMMENTED REFERENCE
-    # =========================================================================
-    #
-    # def _validate_background_jobs_configuration(
-    #     self,
-    # ) -> None:
-    #     """Validate Celery configuration when background jobs are enabled."""
-    #
-    #     if not self.BACKGROUND_JOBS_ENABLED:
-    #         return
-    #
-    #     broker_url = self._required_secret(
-    #         self.CELERY_BROKER_URL,
-    #         "CELERY_BROKER_URL",
-    #     )
-    #
-    #     self._validate_celery_url(
-    #         value=broker_url,
-    #         name="CELERY_BROKER_URL",
-    #     )
-    #
-    #     result_backend = self.celery_result_backend_value
-    #
-    #     if result_backend is not None:
-    #         self._validate_celery_url(
-    #             value=result_backend,
-    #             name="CELERY_RESULT_BACKEND",
-    #         )
-    #
-    #     if (
-    #         self.CELERY_TASK_SOFT_TIME_LIMIT_SECONDS
-    #         >= self.CELERY_TASK_TIME_LIMIT_SECONDS
-    #     ):
-    #         raise ValueError(
-    #             "CELERY_TASK_SOFT_TIME_LIMIT_SECONDS must be lower than "
-    #             "CELERY_TASK_TIME_LIMIT_SECONDS"
-    #         )
-
     def _validate_cors_configuration(
         self,
     ) -> None:
-        """
-        Reject unsafe wildcard and credential combinations.
+        """Reject unsafe wildcard and credential combinations.
 
         Raises:
             ValueError: If wildcard origins are combined with credentials.
         """
-
         if (
             self.CORS_ALLOW_CREDENTIALS
             and "*" in self.CORS_ALLOWED_ORIGINS
@@ -1009,13 +740,11 @@ class AppSettings(BaseSettings):
     def _validate_proxy_configuration(
         self,
     ) -> None:
-        """
-        Require explicit proxy addresses when proxy headers are trusted.
+        """Require explicit proxy addresses when proxy headers are trusted.
 
         Raises:
             ValueError: If proxy trust is enabled without configured proxies.
         """
-
         if (
             self.TRUST_PROXY_HEADERS
             and not self.trusted_proxy_ip_list
@@ -1028,13 +757,11 @@ class AppSettings(BaseSettings):
     def _validate_production_configuration(
         self,
     ) -> None:
-        """
-        Enforce production safety requirements owned by this application.
+        """Enforce production safety requirements owned by this application.
 
         Raises:
             ValueError: If an unsafe production setting is detected.
         """
-
         if self.ENVIRONMENT != Environment.PRODUCTION:
             return
 
@@ -1065,7 +792,8 @@ class AppSettings(BaseSettings):
 
         if "*" in self.CORS_ALLOWED_ORIGINS:
             raise ValueError(
-                "Production CORS_ALLOWED_ORIGINS must not contain a wildcard"
+                "Production CORS_ALLOWED_ORIGINS must not "
+                "contain a wildcard"
             )
 
     # =========================================================================
@@ -1077,8 +805,7 @@ class AppSettings(BaseSettings):
         value: SecretStr | None,
         name: str,
     ) -> str:
-        """
-        Return a required normalized secret value.
+        """Return a required normalized secret value.
 
         Args:
             value: Optional secret setting.
@@ -1090,7 +817,6 @@ class AppSettings(BaseSettings):
         Raises:
             ValueError: If the value is missing or blank.
         """
-
         if value is None:
             raise ValueError(
                 f"{name} is required when its integration is enabled"
@@ -1113,8 +839,7 @@ class AppSettings(BaseSettings):
         allowed_prefixes: tuple[str, ...],
         message: str,
     ) -> None:
-        """
-        Validate a connection URL and its driver prefix.
+        """Validate a connection URL and its driver prefix.
 
         Args:
             value: Connection URL.
@@ -1125,7 +850,6 @@ class AppSettings(BaseSettings):
         Raises:
             ValueError: If the prefix or URL structure is invalid.
         """
-
         if not value.startswith(allowed_prefixes):
             raise ValueError(message)
 
@@ -1136,43 +860,11 @@ class AppSettings(BaseSettings):
                 f"{name} must be a valid connection URL"
             )
 
-    # -------------------------------------------------------------------------
-    # CELERY URL HELPER - COMMENTED REFERENCE
-    # -------------------------------------------------------------------------
-    #
-    # @staticmethod
-    # def _validate_celery_url(
-    #     *,
-    #     value: str,
-    #     name: str,
-    # ) -> None:
-    #     """Validate a supported Celery broker or result-backend URL."""
-    #
-    #     supported_prefixes = (
-    #         "redis://",
-    #         "rediss://",
-    #         "amqp://",
-    #         "amqps://",
-    #     )
-    #
-    #     if not value.startswith(supported_prefixes):
-    #         raise ValueError(
-    #             f"{name} must use Redis or AMQP"
-    #         )
-    #
-    #     parsed = urlparse(value)
-    #
-    #     if not parsed.scheme or not parsed.netloc:
-    #         raise ValueError(
-    #             f"{name} must be a valid connection URL"
-    #         )
-
     @staticmethod
     def _optional_secret_value(
         value: SecretStr | None,
     ) -> str | None:
-        """
-        Return an unwrapped optional secret value.
+        """Return an unwrapped optional secret value.
 
         Args:
             value: Optional secret.
@@ -1180,7 +872,6 @@ class AppSettings(BaseSettings):
         Returns:
             Normalized secret or ``None``.
         """
-
         if value is None:
             return None
 
@@ -1196,13 +887,11 @@ class AppSettings(BaseSettings):
     def log_directory(
         self,
     ) -> Path:
-        """
-        Return the absolute log directory without creating it.
+        """Return the absolute log directory without creating it.
 
         Returns:
             Absolute log directory.
         """
-
         if self.LOG_DIR.is_absolute():
             return self.LOG_DIR
 
@@ -1212,13 +901,11 @@ class AppSettings(BaseSettings):
     def trusted_proxy_ip_list(
         self,
     ) -> tuple[str, ...]:
-        """
-        Return normalized trusted proxy addresses or network ranges.
+        """Return normalized trusted proxy addresses or network ranges.
 
         Returns:
             Deduplicated trusted proxy values.
         """
-
         values = (
             item.strip()
             for item in self.TRUSTED_PROXY_IPS.split(",")
@@ -1236,35 +923,17 @@ class AppSettings(BaseSettings):
     def enabled_database_names(
         self,
     ) -> tuple[str, ...]:
-        """
-        Return names of active database integrations.
+        """Return names of active database integrations.
 
         MySQL is currently the only active database integration.
 
         Returns:
             Enabled database names.
         """
-
         enabled: list[str] = []
 
         if self.ENABLE_MYSQL:
             enabled.append("mysql")
-
-        # ---------------------------------------------------------------------
-        # Uncomment alongside the corresponding settings, adapter, registry,
-        # and API dependency blocks.
-        # ---------------------------------------------------------------------
-        # if self.ENABLE_MSSQL:
-        #     enabled.append("mssql")
-        #
-        # if self.ENABLE_POSTGRES:
-        #     enabled.append("postgres")
-        #
-        # if self.ENABLE_MONGO:
-        #     enabled.append("mongo")
-        #
-        # if self.ENABLE_REDIS:
-        #     enabled.append("redis")
 
         return tuple(enabled)
 
@@ -1272,103 +941,19 @@ class AppSettings(BaseSettings):
     def mysql_url_value(
         self,
     ) -> str | None:
-        """
-        Return the unwrapped MySQL connection URL.
+        """Return the unwrapped MySQL connection URL.
 
         Returns:
             MySQL connection URL or ``None``.
         """
-
         return self._optional_secret_value(
             self.MYSQL_URL
         )
 
-    # =========================================================================
-    # MICROSOFT SQL SERVER PROPERTY - COMMENTED REFERENCE
-    # =========================================================================
-    #
-    # @property
-    # def mssql_url_value(
-    #     self,
-    # ) -> str | None:
-    #     """Return the unwrapped SQL Server connection URL."""
-    #
-    #     return self._optional_secret_value(
-    #         self.MSSQL_URL
-    #     )
-
-    # =========================================================================
-    # POSTGRESQL PROPERTY - COMMENTED REFERENCE
-    # =========================================================================
-    #
-    # @property
-    # def postgres_url_value(
-    #     self,
-    # ) -> str | None:
-    #     """Return the unwrapped PostgreSQL connection URL."""
-    #
-    #     return self._optional_secret_value(
-    #         self.POSTGRES_URL
-    #     )
-
-    # =========================================================================
-    # MONGODB PROPERTY - COMMENTED REFERENCE
-    # =========================================================================
-    #
-    # @property
-    # def mongo_uri_value(
-    #     self,
-    # ) -> str | None:
-    #     """Return the unwrapped MongoDB connection URI."""
-    #
-    #     return self._optional_secret_value(
-    #         self.MONGO_URI
-    #     )
-
-    # =========================================================================
-    # REDIS PROPERTY - COMMENTED REFERENCE
-    # =========================================================================
-    #
-    # @property
-    # def redis_url_value(
-    #     self,
-    # ) -> str | None:
-    #     """Return the unwrapped Redis connection URL."""
-    #
-    #     return self._optional_secret_value(
-    #         self.REDIS_URL
-    #     )
-
-    # =========================================================================
-    # CELERY PROPERTIES - COMMENTED REFERENCE
-    # =========================================================================
-    #
-    # @property
-    # def celery_broker_url_value(
-    #     self,
-    # ) -> str | None:
-    #     """Return the unwrapped Celery broker URL."""
-    #
-    #     return self._optional_secret_value(
-    #         self.CELERY_BROKER_URL
-    #     )
-    #
-    #
-    # @property
-    # def celery_result_backend_value(
-    #     self,
-    # ) -> str | None:
-    #     """Return the unwrapped Celery result-backend URL."""
-    #
-    #     return self._optional_secret_value(
-    #         self.CELERY_RESULT_BACKEND
-    #     )
-
 
 @lru_cache(maxsize=1)
 def get_settings() -> AppSettings:
-    """
-    Return cached and validated process configuration.
+    """Return cached and validated process configuration.
 
     Application code should use this function instead of constructing
     ``AppSettings`` repeatedly.
@@ -1376,18 +961,15 @@ def get_settings() -> AppSettings:
     Returns:
         Cached immutable settings.
     """
-
     return AppSettings()
 
 
 def clear_settings_cache() -> None:
-    """
-    Clear the cached settings object.
+    """Clear the cached settings object.
 
     This helper is intended for tests that temporarily replace environment
     configuration.
     """
-
     get_settings.cache_clear()
 
 

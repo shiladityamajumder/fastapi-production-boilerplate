@@ -1,5 +1,4 @@
-"""
-File: app/main.py
+"""File: app/main.py.
 
 FastAPI application composition root.
 
@@ -13,7 +12,6 @@ Business logic and infrastructure implementation must not be placed here.
 from __future__ import annotations
 
 from fastapi import FastAPI
-from fastapi.responses import JSONResponse
 
 from app.api.exception_handlers import register_exception_handlers
 from app.api.health import router as health_router
@@ -32,8 +30,7 @@ from app.core.middleware import register_middleware
 def create_app(
     settings: AppSettings | None = None,
 ) -> FastAPI:
-    """
-    Build and configure an isolated FastAPI application instance.
+    """Build and configure an isolated FastAPI application instance.
 
     Args:
         settings: Optional validated settings override. Tests may provide an
@@ -43,7 +40,6 @@ def create_app(
     Returns:
         Fully configured FastAPI application.
     """
-
     resolved_settings = settings or get_settings()
 
     # Logging is configured before application startup so initialization
@@ -52,10 +48,7 @@ def create_app(
 
     # Public API documentation is disabled in production by default. Internal
     # teams can expose it through a separate protected environment if needed.
-    docs_enabled = (
-        resolved_settings.ENVIRONMENT
-        != Environment.PRODUCTION
-    )
+    docs_enabled = resolved_settings.ENVIRONMENT != Environment.PRODUCTION
 
     app = FastAPI(
         title=resolved_settings.PROJECT_NAME,
@@ -99,25 +92,19 @@ def create_app(
         summary="Service descriptor",
         include_in_schema=docs_enabled,
     )
-    async def root() -> JSONResponse:
-        """
-        Return non-sensitive service discovery information.
+    async def root():
+        """Return non-sensitive service discovery information.
 
         The endpoint does not expose environment variables, enabled database
         names, connection details, secrets, or infrastructure addresses.
         """
-
         return APIResponse.success(
             message="Service information retrieved successfully",
             data={
                 "service": resolved_settings.PROJECT_NAME,
                 "version": resolved_settings.APP_VERSION,
                 "apiBase": resolved_settings.API_V1_STR,
-                "documentation": (
-                    "/docs"
-                    if docs_enabled
-                    else None
-                ),
+                "documentation": ("/docs" if docs_enabled else None),
                 "health": {
                     "liveness": "/health/live",
                     "readiness": "/health/ready",

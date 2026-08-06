@@ -1,5 +1,4 @@
-"""
-File: app/core/lifespan.py
+"""File: app/core/lifespan.py.
 
 FastAPI startup and shutdown orchestration.
 
@@ -10,12 +9,12 @@ engines or connection pools created by FastAPI.
 
 from __future__ import annotations
 
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator  # noqa: TC003
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI  # noqa: TC002
 
-from app.core.config import AppSettings
+from app.core.config import AppSettings  # noqa: TC001
 from app.core.logging import get_logger
 from app.db.registry import DatabaseRegistry
 
@@ -26,8 +25,7 @@ logger = get_logger(__name__)
 async def lifespan(
     app: FastAPI,
 ) -> AsyncGenerator[None]:
-    """
-    Initialize and close process-wide API infrastructure.
+    """Initialize and close process-wide API infrastructure.
 
     Startup responsibilities:
 
@@ -41,7 +39,7 @@ async def lifespan(
 
     - immediately mark the process as unavailable,
     - close all initialized infrastructure adapters,
-    - release database and Redis connection pools.
+    - release database and cache connection pools.
 
     Args:
         app: FastAPI application instance.
@@ -50,14 +48,15 @@ async def lifespan(
         Control to FastAPI after infrastructure startup completes.
 
     Raises:
-        Exception: Propagates startup or runtime infrastructure failures so
-            the process does not continue in a partially initialized state.
+        Exception: Propagates startup, runtime, or shutdown infrastructure
+            failures.
     """
-
     settings: AppSettings = app.state.settings
 
     # The registry creates only integrations explicitly enabled in settings.
-    registry = DatabaseRegistry.from_settings(settings)
+    registry = DatabaseRegistry.from_settings(
+        settings,
+    )
 
     app.state.ready = False
     app.state.db = registry
@@ -67,16 +66,18 @@ async def lifespan(
         extra={
             "environment": settings.ENVIRONMENT.value,
             "configured_databases": list(
-                settings.enabled_database_names
+                settings.enabled_database_names,
             ),
         },
     )
 
     try:
         # A startup connectivity check prevents the API from reporting ready
-        # when a required database or Redis instance is unavailable.
+        # when a required infrastructure dependency is unavailable.
         await registry.ping_all(
-            timeout_seconds=settings.HEALTHCHECK_TIMEOUT_SECONDS,
+            timeout_seconds=(
+                settings.HEALTHCHECK_TIMEOUT_SECONDS
+            ),
         )
 
         app.state.ready = True
@@ -84,7 +85,9 @@ async def lifespan(
         logger.info(
             "Application startup completed",
             extra={
-                "enabled_adapters": list(registry.adapters),
+                "enabled_adapters": list(
+                    registry.adapters,
+                ),
             },
         )
 
@@ -97,11 +100,13 @@ async def lifespan(
         raise
 
     finally:
-        # Readiness is removed before connections begin closing so traffic
-        # can be drained by the gateway or orchestrator.
+        # Readiness is removed before connections begin closing so traffic can
+        # be drained by the gateway or orchestrator.
         app.state.ready = False
 
-        logger.info("Application shutdown initiated")
+        logger.info(
+            "Application shutdown initiated"
+        )
 
         try:
             await registry.close()
@@ -111,7 +116,9 @@ async def lifespan(
             )
             raise
         else:
-            logger.info("Application shutdown completed")
+            logger.info(
+                "Application shutdown completed"
+            )
 
 
 __all__ = [

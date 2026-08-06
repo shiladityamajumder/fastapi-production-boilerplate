@@ -1,5 +1,4 @@
-"""
-File: app/common/filters.py
+"""File: app/common/filters.py.
 
 Allow-listed SQLAlchemy filtering and search helpers.
 
@@ -17,7 +16,7 @@ from collections.abc import (
     Mapping,
     Sequence,
 )
-from datetime import (
+from datetime import (  # noqa: TC003
     date,
     datetime,
 )
@@ -34,7 +33,6 @@ from sqlalchemy.orm.attributes import InstrumentedAttribute
 from sqlalchemy.sql.elements import ColumnElement
 
 from app.common.exceptions import ValidationError
-
 
 type SQLFilterColumn = (
     ColumnElement[Any]
@@ -64,12 +62,16 @@ _FALSE_STRINGS = frozenset(
     }
 )
 
+_BOOLEAN_BYTES = {
+    b"\x00": False,
+    b"\x01": True,
+}
+
 
 def normalize_boolean(
     value: Any,
 ) -> bool | None:
-    """
-    Convert explicit boolean representations without using truthiness.
+    """Convert explicit boolean representations without using truthiness.
 
     Args:
         value: Raw boolean-like value.
@@ -80,45 +82,44 @@ def normalize_boolean(
     Raises:
         ValidationError: If the value cannot be safely interpreted.
     """
-
     if value is None:
         return None
 
+    normalized: bool | None = None
+
     if isinstance(value, bool):
-        return value
+        normalized = value
 
-    if isinstance(value, int) and value in {0, 1}:
-        return bool(value)
+    elif isinstance(value, int) and value in {0, 1}:
+        normalized = bool(value)
 
-    if isinstance(value, bytes):
-        if value == b"\x01":
-            return True
+    elif isinstance(value, bytes):
+        normalized = _BOOLEAN_BYTES.get(value)
 
-        if value == b"\x00":
-            return False
+    elif isinstance(value, str):
+        normalized_text = value.strip().casefold()
 
-    if isinstance(value, str):
-        normalized = value.strip().casefold()
+        if normalized_text in _TRUE_STRINGS:
+            normalized = True
 
-        if normalized in _TRUE_STRINGS:
-            return True
+        elif normalized_text in _FALSE_STRINGS:
+            normalized = False
 
-        if normalized in _FALSE_STRINGS:
-            return False
+    if normalized is None:
+        raise ValidationError(
+            message="Invalid boolean value.",
+            details={
+                "valueType": type(value).__name__,
+            },
+        )
 
-    raise ValidationError(
-        message="Invalid boolean value.",
-        details={
-            "valueType": type(value).__name__,
-        },
-    )
+    return normalized
 
 
 def build_true_condition(
     column: SQLFilterColumn,
 ) -> ColumnElement[bool]:
-    """
-    Build a cross-dialect true comparison.
+    """Build a cross-dialect true comparison.
 
     Args:
         column: Boolean-compatible SQLAlchemy column.
@@ -126,7 +127,6 @@ def build_true_condition(
     Returns:
         SQLAlchemy boolean expression.
     """
-
     return column == true()
 
 
@@ -135,8 +135,7 @@ def build_false_condition(
     *,
     include_null: bool = False,
 ) -> ColumnElement[bool]:
-    """
-    Build a false comparison, optionally treating SQL NULL as false.
+    """Build a false comparison, optionally treating SQL NULL as false.
 
     Args:
         column: Boolean-compatible SQLAlchemy column.
@@ -145,7 +144,6 @@ def build_false_condition(
     Returns:
         SQLAlchemy boolean expression.
     """
-
     condition = column == false()
 
     if include_null:
@@ -165,8 +163,7 @@ def apply_text_search(
     min_length: int = 2,
     max_length: int = 128,
 ) -> SQLSelect:
-    """
-    Apply an escaped, case-insensitive contains search.
+    """Apply an escaped, case-insensitive contains search.
 
     Args:
         statement: Base SQLAlchemy select statement.
@@ -182,13 +179,14 @@ def apply_text_search(
         ValueError: If length configuration is invalid.
         ValidationError: If the search length is outside the allowed range.
     """
-
     _validate_length_bounds(
         min_length=min_length,
         max_length=max_length,
     )
 
-    normalized = _normalize_search_value(search)
+    normalized = _normalize_search_value(
+        search,
+    )
 
     if normalized is None:
         return statement
@@ -199,21 +197,17 @@ def apply_text_search(
         max_length=max_length,
     )
 
-    escaped = _escape_like(normalized)
-
-    conditions = [
-        column.ilike(
-            f"%{escaped}%",
-            escape="\\",
-        )
-        for column in columns
-    ]
+    conditions = _build_search_conditions(
+        value=normalized,
+        columns=columns,
+        prefix_only=False,
+    )
 
     if not conditions:
         return statement
 
     return statement.where(
-        or_(*conditions)
+        or_(*conditions),
     )
 
 
@@ -225,8 +219,7 @@ def apply_prefix_search(
     min_length: int = 1,
     max_length: int = 128,
 ) -> SQLSelect:
-    """
-    Apply an escaped, case-insensitive prefix search.
+    """Apply an escaped, case-insensitive prefix search.
 
     Prefix search is generally more index-friendly than contains search and is
     appropriate for autosuggest-style endpoints.
@@ -245,13 +238,14 @@ def apply_prefix_search(
         ValueError: If length configuration is invalid.
         ValidationError: If the search length is outside the allowed range.
     """
-
     _validate_length_bounds(
         min_length=min_length,
         max_length=max_length,
     )
 
-    normalized = _normalize_search_value(search)
+    normalized = _normalize_search_value(
+        search,
+    )
 
     if normalized is None:
         return statement
@@ -262,21 +256,17 @@ def apply_prefix_search(
         max_length=max_length,
     )
 
-    escaped = _escape_like(normalized)
-
-    conditions = [
-        column.ilike(
-            f"{escaped}%",
-            escape="\\",
-        )
-        for column in columns
-    ]
+    conditions = _build_search_conditions(
+        value=normalized,
+        columns=columns,
+        prefix_only=True,
+    )
 
     if not conditions:
         return statement
 
     return statement.where(
-        or_(*conditions)
+        or_(*conditions),
     )
 
 
@@ -286,8 +276,7 @@ def apply_exact_filter(
     column: SQLFilterColumn,
     value: Any,
 ) -> SQLSelect:
-    """
-    Apply equality filtering when a value is present.
+    """Apply equality filtering when a value is present.
 
     Args:
         statement: Base SQLAlchemy select statement.
@@ -297,12 +286,11 @@ def apply_exact_filter(
     Returns:
         Updated or unchanged statement.
     """
-
     if value is None:
         return statement
 
     return statement.where(
-        column == value
+        column == value,
     )
 
 
@@ -313,8 +301,7 @@ def apply_boolean_filter(
     value: Any,
     include_null_as_false: bool = False,
 ) -> SQLSelect:
-    """
-    Normalize and apply a boolean filter.
+    """Normalize and apply a boolean filter.
 
     Args:
         statement: Base SQLAlchemy select statement.
@@ -328,8 +315,9 @@ def apply_boolean_filter(
     Raises:
         ValidationError: If the value is not a supported boolean.
     """
-
-    normalized = normalize_boolean(value)
+    normalized = normalize_boolean(
+        value,
+    )
 
     if normalized is None:
         return statement
@@ -343,7 +331,9 @@ def apply_boolean_filter(
         )
     )
 
-    return statement.where(condition)
+    return statement.where(
+        condition,
+    )
 
 
 def apply_in_filter(
@@ -353,8 +343,7 @@ def apply_in_filter(
     values: Sequence[Any] | None,
     max_values: int = 100,
 ) -> SQLSelect:
-    """
-    Apply a bounded SQL IN predicate.
+    """Apply a bounded SQL IN predicate.
 
     Args:
         statement: Base SQLAlchemy select statement.
@@ -369,27 +358,21 @@ def apply_in_filter(
         ValueError: If ``max_values`` is invalid.
         ValidationError: If too many values are supplied.
     """
-
-    if max_values < 1:
-        raise ValueError(
-            "max_values must be greater than zero"
-        )
+    _validate_max_values(
+        value=max_values,
+        name="max_values",
+    )
 
     if not values:
         return statement
 
-    if len(values) > max_values:
-        raise ValidationError(
-            message=(
-                "Too many values were supplied for a filter."
-            ),
-            details={
-                "maxValues": max_values,
-            },
-        )
+    _validate_value_count(
+        values=values,
+        max_values=max_values,
+    )
 
     return statement.where(
-        column.in_(list(values))
+        column.in_(list(values)),
     )
 
 
@@ -400,8 +383,7 @@ def apply_date_range_filter(
     start_date: date | datetime | None = None,
     end_date: date | datetime | None = None,
 ) -> SQLSelect:
-    """
-    Apply inclusive date or datetime bounds.
+    """Apply inclusive date or datetime bounds.
 
     Args:
         statement: Base SQLAlchemy select statement.
@@ -415,7 +397,6 @@ def apply_date_range_filter(
     Raises:
         ValidationError: If the lower bound is after the upper bound.
     """
-
     if (
         start_date is not None
         and end_date is not None
@@ -424,23 +405,23 @@ def apply_date_range_filter(
         raise ValidationError(
             message=(
                 "The start date must not be after the end date."
-            )
+            ),
         )
 
     if start_date is not None:
         statement = statement.where(
-            column >= start_date
+            column >= start_date,
         )
 
     if end_date is not None:
         statement = statement.where(
-            column <= end_date
+            column <= end_date,
         )
 
     return statement
 
 
-def apply_dynamic_filters(
+def apply_dynamic_filters(  # noqa: PLR0913
     statement: SQLSelect,
     *,
     filters: Mapping[str, Any] | None,
@@ -452,8 +433,11 @@ def apply_dynamic_filters(
     max_in_values: int = 100,
     strict: bool = True,
 ) -> SQLSelect:
-    """
-    Apply allow-listed exact, boolean, and bounded-list filters.
+    """Apply allow-listed exact, boolean, and bounded-list filters.
+
+    The keyword-only options are intentionally kept separate because each
+    controls an independent filtering policy and existing repositories may
+    already call this helper using those names.
 
     Args:
         statement: Base SQLAlchemy select statement.
@@ -470,107 +454,224 @@ def apply_dynamic_filters(
         ValueError: If ``max_in_values`` is invalid.
         ValidationError: If a field or value is unsupported.
     """
-
-    if max_in_values < 1:
-        raise ValueError(
-            "max_in_values must be greater than zero"
-        )
+    _validate_max_values(
+        value=max_in_values,
+        name="max_in_values",
+    )
 
     if not filters:
         return statement
 
     normalized_boolean_fields = (
         boolean_fields
-        or set()
+        if boolean_fields is not None
+        else set()
     )
 
     conditions: list[ColumnElement[bool]] = []
 
     for field, value in filters.items():
-        column = allowed_filters.get(field)
-
-        if column is None:
-            if strict:
-                raise ValidationError(
-                    message="Unsupported filter field.",
-                    details={
-                        "field": field,
-                        "allowedFields": sorted(
-                            allowed_filters
-                        ),
-                    },
-                )
-
-            continue
-
-        if value is None:
-            continue
-
-        if field in normalized_boolean_fields:
-            normalized_boolean = normalize_boolean(
-                value
-            )
-
-            if normalized_boolean is None:
-                continue
-
-            conditions.append(
-                build_true_condition(column)
-                if normalized_boolean
-                else build_false_condition(column)
-            )
-
-            continue
-
-        if isinstance(value, Sequence) and not isinstance(
-            value,
-            (
-                str,
-                bytes,
-                bytearray,
-            ),
-        ):
-            if not value:
-                continue
-
-            if len(value) > max_in_values:
-                raise ValidationError(
-                    message=(
-                        "Too many values were supplied for a filter."
-                    ),
-                    details={
-                        "field": field,
-                        "maxValues": max_in_values,
-                    },
-                )
-
-            conditions.append(
-                column.in_(list(value))
-            )
-
-            continue
-
-        conditions.append(
-            column == value
+        condition = _build_dynamic_filter_condition(
+            field=field,
+            value=value,
+            allowed_filters=allowed_filters,
+            boolean_fields=normalized_boolean_fields,
+            max_in_values=max_in_values,
+            strict=strict,
         )
+
+        if condition is not None:
+            conditions.append(condition)
 
     if not conditions:
         return statement
 
     return statement.where(
-        and_(*conditions)
+        and_(*conditions),
     )
+
+
+def _build_dynamic_filter_condition(  # noqa: PLR0913
+    *,
+    field: str,
+    value: Any,
+    allowed_filters: Mapping[
+        str,
+        SQLFilterColumn,
+    ],
+    boolean_fields: set[str],
+    max_in_values: int,
+    strict: bool,
+) -> ColumnElement[bool] | None:
+    """Build one validated dynamic filter condition.
+
+    Args:
+        field: Public filter field.
+        value: Filter value.
+        allowed_filters: Public field-to-column allow-list.
+        boolean_fields: Fields requiring boolean normalization.
+        max_in_values: Maximum accepted values for list filters.
+        strict: Whether unsupported fields should be rejected.
+
+    Returns:
+        SQL expression or ``None`` when the filter should be skipped.
+
+    Raises:
+        ValidationError: If the field or value is unsupported.
+    """
+    column = allowed_filters.get(field)
+
+    if column is None:
+        if strict:
+            raise ValidationError(
+                message="Unsupported filter field.",
+                details={
+                    "field": field,
+                    "allowedFields": sorted(
+                        allowed_filters,
+                    ),
+                },
+            )
+
+        return None
+
+    if value is None:
+        return None
+
+    if field in boolean_fields:
+        return _build_dynamic_boolean_condition(
+            column=column,
+            value=value,
+        )
+
+    if _is_non_text_sequence(value):
+        return _build_dynamic_in_condition(
+            field=field,
+            column=column,
+            values=value,
+            max_in_values=max_in_values,
+        )
+
+    return column == value
+
+
+def _build_dynamic_boolean_condition(
+    *,
+    column: SQLFilterColumn,
+    value: Any,
+) -> ColumnElement[bool] | None:
+    """Build one normalized dynamic boolean condition.
+
+    Args:
+        column: Boolean-compatible database column.
+        value: Raw boolean-like value.
+
+    Returns:
+        Boolean expression or ``None``.
+    """
+    normalized = normalize_boolean(
+        value,
+    )
+
+    if normalized is None:
+        return None
+
+    if normalized:
+        return build_true_condition(
+            column,
+        )
+
+    return build_false_condition(
+        column,
+    )
+
+
+def _build_dynamic_in_condition(
+    *,
+    field: str,
+    column: SQLFilterColumn,
+    values: Sequence[Any],
+    max_in_values: int,
+) -> ColumnElement[bool] | None:
+    """Build one bounded dynamic IN condition.
+
+    Args:
+        field: Public filter field.
+        column: Database column.
+        values: Filter values.
+        max_in_values: Maximum accepted values.
+
+    Returns:
+        SQL IN expression or ``None`` for an empty sequence.
+
+    Raises:
+        ValidationError: If too many values are supplied.
+    """
+    if not values:
+        return None
+
+    _validate_value_count(
+        values=values,
+        max_values=max_in_values,
+        field=field,
+    )
+
+    return column.in_(
+        list(values),
+    )
+
+
+def _build_search_conditions(
+    *,
+    value: str,
+    columns: Sequence[SQLFilterColumn],
+    prefix_only: bool,
+) -> list[ColumnElement[bool]]:
+    """Build escaped SQL LIKE conditions for allow-listed columns.
+
+    Args:
+        value: Normalized search value.
+        columns: Explicitly allow-listed searchable columns.
+        prefix_only: Use prefix matching instead of contains matching.
+
+    Returns:
+        SQLAlchemy boolean expressions.
+    """
+    escaped = _escape_like(
+        value,
+    )
+
+    pattern = (
+        f"{escaped}%"
+        if prefix_only
+        else f"%{escaped}%"
+    )
+
+    return [
+        column.ilike(
+            pattern,
+            escape="\\",
+        )
+        for column in columns
+    ]
 
 
 def _normalize_search_value(
     value: str | None,
 ) -> str | None:
-    """Normalize an optional search value."""
+    """Normalize an optional search value.
 
+    Args:
+        value: Optional raw search value.
+
+    Returns:
+        Stripped value or ``None``.
+    """
     if value is None:
         return None
 
     normalized = value.strip()
+
     return normalized or None
 
 
@@ -579,8 +680,15 @@ def _validate_length_bounds(
     min_length: int,
     max_length: int,
 ) -> None:
-    """Validate reusable search-length configuration."""
+    """Validate reusable search-length configuration.
 
+    Args:
+        min_length: Minimum permitted search length.
+        max_length: Maximum permitted search length.
+
+    Raises:
+        ValueError: If the bounds are invalid.
+    """
     if min_length < 1:
         raise ValueError(
             "min_length must be greater than zero"
@@ -598,8 +706,16 @@ def _validate_search_length(
     min_length: int,
     max_length: int,
 ) -> None:
-    """Validate a normalized search term."""
+    """Validate a normalized search term.
 
+    Args:
+        value: Normalized search value.
+        min_length: Minimum permitted length.
+        max_length: Maximum permitted length.
+
+    Raises:
+        ValidationError: If the length is outside the allowed range.
+    """
     if not min_length <= len(value) <= max_length:
         raise ValidationError(
             message=(
@@ -612,11 +728,88 @@ def _validate_search_length(
         )
 
 
+def _validate_max_values(
+    *,
+    value: int,
+    name: str,
+) -> None:
+    """Validate a configured maximum list size.
+
+    Args:
+        value: Configured maximum.
+        name: Configuration argument name.
+
+    Raises:
+        ValueError: If the maximum is not positive.
+    """
+    if value < 1:
+        raise ValueError(
+            f"{name} must be greater than zero"
+        )
+
+
+def _validate_value_count(
+    *,
+    values: Sequence[Any],
+    max_values: int,
+    field: str | None = None,
+) -> None:
+    """Validate the size of a sequence filter.
+
+    Args:
+        values: Values supplied for filtering.
+        max_values: Maximum permitted number of values.
+        field: Optional public filter field.
+
+    Raises:
+        ValidationError: If the sequence exceeds the permitted size.
+    """
+    if len(values) <= max_values:
+        return
+
+    details: dict[str, Any] = {
+        "maxValues": max_values,
+    }
+
+    if field is not None:
+        details["field"] = field
+
+    raise ValidationError(
+        message=(
+            "Too many values were supplied for a filter."
+        ),
+        details=details,
+    )
+
+
+def _is_non_text_sequence(
+    value: Any,
+) -> bool:
+    """Return whether a value is a non-text sequence.
+
+    Args:
+        value: Value being inspected.
+
+    Returns:
+        ``True`` for supported list-like filter values.
+    """
+    return isinstance(
+        value,
+        Sequence,
+    ) and not isinstance(
+        value,
+        (
+            str,
+            bytes,
+            bytearray,
+        ),
+    )
+
+
 def _escape_like(
     value: str,
 ) -> str:
-    """
-    Escape SQL LIKE wildcard characters.
+    """Escape SQL LIKE wildcard characters.
 
     Args:
         value: User-provided search value.
@@ -624,12 +817,19 @@ def _escape_like(
     Returns:
         Escaped SQL LIKE value.
     """
-
     return (
-        value
-        .replace("\\", "\\\\")
-        .replace("%", "\\%")
-        .replace("_", "\\_")
+        value.replace(
+            "\\",
+            "\\\\",
+        )
+        .replace(
+            "%",
+            "\\%",
+        )
+        .replace(
+            "_",
+            "\\_",
+        )
     )
 
 
