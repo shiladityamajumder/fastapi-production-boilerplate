@@ -365,11 +365,8 @@ python -m pip install --upgrade pip setuptools wheel
 python -m pip install -r requirements-dev.txt
 ```
 
-Alternative installation through `pyproject.toml`:
-
-```bash
-python -m pip install -e ".[dev]"
-```
+`requirements.txt` and `requirements-dev.txt` are the dependency manifests.
+`pyproject.toml` is used only for project metadata and tool configuration.
 
 ### 5. Create the environment file
 

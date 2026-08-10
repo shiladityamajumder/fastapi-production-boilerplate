@@ -19,9 +19,9 @@
 # - Microsoft SQL Server
 # - Celery
 #
-# The preferred project dependency source is ``pyproject.toml``. This file is
-# retained for environments and deployment systems that still expect a
-# ``requirements.txt`` file.
+# This is the single source of truth for production Python dependencies.
+# ``pyproject.toml`` contains tool configuration and package metadata only; it
+# does not declare or install application dependencies.
 #
 # Install active runtime dependencies with:
 #
@@ -230,14 +230,9 @@ tzdata>=2025.2; platform_system == "Windows"
 # =============================================================================
 # DEVELOPMENT AND TESTING DEPENDENCIES — NOT INSTALLED IN PRODUCTION
 #
-# Keep development tools in ``pyproject.toml`` under:
+# Keep development tools in ``requirements-dev.txt`` and install them with:
 #
-#     [project.optional-dependencies]
-#     dev = [...]
-#
-# Install them with:
-#
-#     python -m pip install --editable ".[dev]"
+#     python -m pip install --requirement requirements-dev.txt
 #
 # They are intentionally not active in this runtime requirements file.
 # =============================================================================

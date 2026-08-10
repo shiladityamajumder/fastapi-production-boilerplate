@@ -61,7 +61,10 @@ services:
     # The .env file must not be committed to source control or copied into the
     # Docker image.
     env_file:
-      - .env
+      # Local overrides are optional; the application has safe development
+      # defaults and production deployments can inject variables directly.
+      - path: .env
+        required: false
 
     environment:
       # Bind the application to all container network interfaces.
@@ -90,20 +93,6 @@ services:
       #
       # The default is 8000 when APP_PORT is absent.
       - "${APP_PORT:-8000}:8000"
-
-    # =========================================================================
-    # STARTUP COMMAND
-    # =========================================================================
-
-    command:
-      - uvicorn
-      - app.main:app
-      - --host
-      - "0.0.0.0"
-      - --port
-      - "8000"
-      - --proxy-headers
-      - --no-server-header
 
     # =========================================================================
     # HEALTH CHECK

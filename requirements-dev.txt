@@ -23,7 +23,7 @@
 #
 #     python -m pip install --requirement requirements.txt
 #
-# or install the default dependencies directly from ``pyproject.toml``.
+# Dependencies are intentionally not installed from ``pyproject.toml``.
 # =============================================================================
 
 

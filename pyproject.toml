@@ -1,5 +1,5 @@
 # =============================================================================
-# PROJECT BUILD CONFIGURATION
+# PROJECT METADATA AND TOOL CONFIGURATION
 #
 # This project currently runs:
 #
@@ -10,22 +10,9 @@
 # - SQLAlchemy 2 async
 # - MySQL through asyncmy
 #
-# Celery, Redis, PostgreSQL, Microsoft SQL Server, and MongoDB are retained as
-# optional dependency groups. They are not installed by default.
+# All Python package dependencies are declared in requirements.txt or
+# requirements-dev.txt. This file intentionally contains no dependency lists.
 # =============================================================================
-
-
-# =============================================================================
-# BUILD SYSTEM
-# =============================================================================
-
-[build-system]
-requires = [
-    "setuptools>=75,<82",
-    "wheel>=0.45,<1",
-]
-
-build-backend = "setuptools.build_meta"
 
 
 # =============================================================================
@@ -45,20 +32,14 @@ readme = "README.md"
 
 requires-python = ">=3.12,<3.15"
 
-license = {
-    text = "Proprietary"
-}
+license = { text = "Proprietary" }
 
 authors = [
-    {
-        name = "Development Team"
-    },
+    { name = "Development Team" },
 ]
 
 maintainers = [
-    {
-        name = "Development Team"
-    },
+    { name = "Development Team" },
 ]
 
 keywords = [
@@ -87,213 +68,9 @@ classifiers = [
 ]
 
 
-# =============================================================================
-# ACTIVE RUNTIME DEPENDENCIES
-#
-# Only dependencies required by the FastAPI service and active MySQL
-# integration belong in this section.
-#
-# Celery and other database drivers are intentionally excluded.
-# =============================================================================
-
-dependencies = [
-    # -------------------------------------------------------------------------
-    # WEB FRAMEWORK
-    # -------------------------------------------------------------------------
-
-    "fastapi>=0.115,<1.0",
-
-    # Uvicorn standard includes production-supporting dependencies such as
-    # uvloop on supported Unix platforms, httptools, and watchfiles.
-    "uvicorn[standard]>=0.34,<1.0",
-
-    # -------------------------------------------------------------------------
-    # DATA VALIDATION AND SETTINGS
-    # -------------------------------------------------------------------------
-
-    "pydantic>=2.11,<3.0",
-    "pydantic-settings>=2.10,<3.0",
-
-    # -------------------------------------------------------------------------
-    # DATABASE
-    # -------------------------------------------------------------------------
-
-    "SQLAlchemy[asyncio]>=2.0.40,<3.0",
-
-    # Active asynchronous MySQL/MariaDB driver.
-    "asyncmy>=0.2.11,<0.3",
-
-    # -------------------------------------------------------------------------
-    # STRUCTURED LOGGING
-    # -------------------------------------------------------------------------
-
-    "python-json-logger>=3.3,<5.0",
-
-    # -------------------------------------------------------------------------
-    # TIMEZONE DATA
-    #
-    # Windows installations may not include the IANA timezone database.
-    # tzdata ensures zoneinfo can resolve configured timezone names.
-    # -------------------------------------------------------------------------
-
-    "tzdata>=2025.2; platform_system == 'Windows'",
-]
-
-
-# =============================================================================
-# OPTIONAL DEPENDENCY GROUPS
-#
-# Install optional features only when they are activated in application code.
-#
-# Examples:
-#
-#     pip install -e ".[dev]"
-#     pip install -e ".[worker]"
-#     pip install -e ".[postgres]"
-#     pip install -e ".[all-databases]"
-# =============================================================================
-
-[project.optional-dependencies]
-
-
-# -----------------------------------------------------------------------------
-# DEVELOPMENT AND TESTING
-# -----------------------------------------------------------------------------
-
-dev = [
-    # Testing framework.
-    "pytest>=8.4,<10.0",
-
-    # Async pytest support.
-    "pytest-asyncio>=1.1,<2.0",
-
-    # HTTP client used by FastAPI integration tests.
-    "httpx>=0.28,<1.0",
-
-    # Test coverage.
-    "coverage[toml]>=7.10,<8.0",
-    "pytest-cov>=6.2,<8.0",
-
-    # Static analysis and formatting.
-    "ruff>=0.12,<1.0",
-    "mypy>=1.17,<2.0",
-
-    # Type information for selected dependencies.
-    "types-python-dateutil>=2.9,<3.0",
-
-    # Security-oriented dependency inspection.
-    "pip-audit>=2.9,<3.0",
-]
-
-
-# -----------------------------------------------------------------------------
-# CELERY WORKER
-#
-# This group is not installed by default.
-#
-# Activate only after:
-#
-# - Celery settings are uncommented in app/core/config.py,
-# - worker code is ready,
-# - broker infrastructure is available,
-# - task implementations and tests are complete.
-#
-# Install using:
-#
-#     pip install -e ".[worker]"
-# -----------------------------------------------------------------------------
-
-worker = [
-    "celery>=5.5,<6.0",
-
-    # Redis is included as the initial supported Celery transport.
-    # Remove this dependency when RabbitMQ is the only broker.
-    "redis>=6.2,<8.0",
-]
-
-
-# -----------------------------------------------------------------------------
-# APPLICATION REDIS
-#
-# This group is independent of Celery. Use it for application caching,
-# distributed locks, idempotency, or other direct Redis operations.
-# -----------------------------------------------------------------------------
-
-redis = [
-    "redis>=6.2,<8.0",
-]
-
-
-# -----------------------------------------------------------------------------
-# POSTGRESQL
-# -----------------------------------------------------------------------------
-
-postgres = [
-    "asyncpg>=0.30,<1.0",
-]
-
-
-# -----------------------------------------------------------------------------
-# MICROSOFT SQL SERVER
-#
-# The operating system must also provide the required Microsoft ODBC driver.
-# -----------------------------------------------------------------------------
-
-mssql = [
-    "aioodbc>=0.5,<1.0",
-    "pyodbc>=5.2,<6.0",
-]
-
-
-# -----------------------------------------------------------------------------
-# MONGODB
-# -----------------------------------------------------------------------------
-
-mongo = [
-    "pymongo>=4.13,<5.0",
-]
-
-
-# -----------------------------------------------------------------------------
-# ALL OPTIONAL DATABASE CLIENTS
-#
-# This does not include Celery.
-# -----------------------------------------------------------------------------
-
-all-databases = [
-    "redis>=6.2,<8.0",
-    "asyncpg>=0.30,<1.0",
-    "aioodbc>=0.5,<1.0",
-    "pyodbc>=5.2,<6.0",
-    "pymongo>=4.13,<5.0",
-]
-
-
-# -----------------------------------------------------------------------------
-# COMPLETE LOCAL DEVELOPMENT INSTALLATION
-#
-# This group is useful only when developers need every optional adapter and
-# Celery locally.
-#
-# Avoid installing it in the production FastAPI image.
-# -----------------------------------------------------------------------------
-
-all = [
-    "pytest>=8.4,<10.0",
-    "pytest-asyncio>=1.1,<2.0",
-    "httpx>=0.28,<1.0",
-    "coverage[toml]>=7.10,<8.0",
-    "pytest-cov>=6.2,<8.0",
-    "ruff>=0.12,<1.0",
-    "mypy>=1.17,<2.0",
-    "pip-audit>=2.9,<3.0",
-    "celery>=5.5,<6.0",
-    "redis>=6.2,<8.0",
-    "asyncpg>=0.30,<1.0",
-    "aioodbc>=0.5,<1.0",
-    "pyodbc>=5.2,<6.0",
-    "pymongo>=4.13,<5.0",
-]
+# Python dependency declarations intentionally do not live in this file.
+# Install runtime dependencies from requirements.txt and development/test
+# dependencies from requirements-dev.txt.
 
 
 # =============================================================================

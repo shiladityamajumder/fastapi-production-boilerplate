@@ -1786,14 +1786,12 @@ External infrastructure is configured through environment URLs.
 
 ## 📦 69. `pyproject.toml`
 
-Primary project and tooling configuration.
+Project metadata and Python tool configuration.
 
 ### Contains
 
 * project metadata,
 * Python version,
-* runtime dependencies,
-* optional dependencies,
 * setuptools configuration,
 * pytest configuration,
 * coverage configuration,
@@ -1804,7 +1802,7 @@ Primary project and tooling configuration.
 
 ## 📋 70. `requirements.txt`
 
-Runtime dependency compatibility file.
+Authoritative production dependency manifest.
 
 Active packages include:
 
