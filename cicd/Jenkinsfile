@@ -1,0 +1,345 @@
+pipeline {
+    agent any
+
+    options {
+        timestamps()
+        disableConcurrentBuilds()
+        buildDiscarder(logRotator(numToKeepStr: '20'))
+        timeout(time: 45, unit: 'MINUTES')
+        skipDefaultCheckout(true)
+    }
+
+    parameters {
+        booleanParam(
+            name: 'ENFORCE_QUALITY_GATES',
+            defaultValue: false,
+            description: 'Fail the build on Ruff, mypy, pytest, or dependency-audit errors. Enable after the current baseline is fixed.'
+        )
+        booleanParam(
+            name: 'DEPLOY',
+            defaultValue: false,
+            description: 'Deploy the API after all checks pass (main branch only).'
+        )
+        choice(
+            name: 'DEPLOY_ENVIRONMENT',
+            choices: ['staging', 'production'],
+            description: 'Deployment name and Compose project suffix.'
+        )
+        string(
+            name: 'APP_PORT',
+            defaultValue: '8000',
+            description: 'Host port published by the API container.'
+        )
+        string(
+            name: 'IMAGE_REPOSITORY',
+            defaultValue: 'fastapi-service',
+            description: 'Docker repository name. Include the registry hostname when publishing externally.'
+        )
+        string(
+            name: 'ENV_FILE_CREDENTIAL_ID',
+            defaultValue: 'fastapi-production-env',
+            description: 'Jenkins Secret file credential containing the deployment .env file.'
+        )
+        booleanParam(
+            name: 'PUSH_IMAGE',
+            defaultValue: false,
+            description: 'Push the immutable image tag to a Docker registry.'
+        )
+        string(
+            name: 'REGISTRY_HOST',
+            defaultValue: '',
+            description: 'Registry login hostname, required only when PUSH_IMAGE is enabled.'
+        )
+        string(
+            name: 'REGISTRY_CREDENTIAL_ID',
+            defaultValue: '',
+            description: 'Jenkins username/password credential for the Docker registry.'
+        )
+    }
+
+    environment {
+        CI_IMAGE = "fastapi-service-ci:${BUILD_NUMBER}"
+        COMPOSE_FILE = 'cicd/compose.deploy.yml'
+    }
+
+    stages {
+        stage('Checkout') {
+            steps {
+                checkout scm
+                script {
+                    env.GIT_SHA = sh(
+                        script: 'git rev-parse --short=12 HEAD',
+                        returnStdout: true
+                    ).trim()
+                    env.IMAGE_TAG = "${env.GIT_SHA}-${env.BUILD_NUMBER}"
+                }
+            }
+        }
+
+        stage('Validate inputs') {
+            steps {
+                sh '''#!/usr/bin/env bash
+                    set -Eeuo pipefail
+                    [[ "${APP_PORT}" =~ ^[0-9]+$ ]] || {
+                        echo "APP_PORT must be an integer" >&2
+                        exit 2
+                    }
+                    (( APP_PORT >= 1 && APP_PORT <= 65535 )) || {
+                        echo "APP_PORT must be between 1 and 65535" >&2
+                        exit 2
+                    }
+                    [[ "${IMAGE_REPOSITORY}" =~ ^[a-zA-Z0-9._:/-]+$ ]] || {
+                        echo "IMAGE_REPOSITORY contains unsupported characters" >&2
+                        exit 2
+                    }
+                '''
+                script {
+                    if (params.PUSH_IMAGE &&
+                        (!params.REGISTRY_HOST.trim() ||
+                         !params.REGISTRY_CREDENTIAL_ID.trim())) {
+                        error('REGISTRY_HOST and REGISTRY_CREDENTIAL_ID are required when PUSH_IMAGE=true')
+                    }
+                }
+            }
+        }
+
+        stage('Build CI environment') {
+            steps {
+                sh 'docker build --pull --tag "$CI_IMAGE" --file cicd/Dockerfile.ci .'
+            }
+        }
+
+        stage('Quality and tests') {
+            parallel {
+                stage('Ruff') {
+                    steps {
+                        script {
+                            def check = {
+                                sh '''#!/usr/bin/env bash
+                                    set -Eeuo pipefail
+                                    docker run --rm "$CI_IMAGE" python -m ruff check app tests
+                                    docker run --rm "$CI_IMAGE" python -m ruff format --check app tests
+                                '''
+                            }
+                            if (params.ENFORCE_QUALITY_GATES) {
+                                check()
+                            } else {
+                                warnError('Ruff checks failed against the existing baseline') {
+                                    check()
+                                }
+                            }
+                        }
+                    }
+                }
+                stage('Mypy') {
+                    steps {
+                        script {
+                            def check = {
+                                sh 'docker run --rm "$CI_IMAGE" python -m mypy app'
+                            }
+                            if (params.ENFORCE_QUALITY_GATES) {
+                                check()
+                            } else {
+                                warnError('Mypy failed against the existing baseline') {
+                                    check()
+                                }
+                            }
+                        }
+                    }
+                }
+                stage('Pytest') {
+                    steps {
+                        script {
+                            def check = {
+                                sh '''#!/usr/bin/env bash
+                                    set -Eeuo pipefail
+                                    container="fastapi-tests-${BUILD_NUMBER}"
+                                    docker create --name "$container" "$CI_IMAGE" \
+                                        python -m pytest --junitxml=test-results/junit.xml
+                                    status=0
+                                    docker start --attach "$container" || status=$?
+                                    mkdir -p test-results
+                                    docker cp "$container:/workspace/test-results/." test-results/ 2>/dev/null || true
+                                    docker cp "$container:/workspace/coverage.xml" coverage.xml 2>/dev/null || true
+                                    docker rm --force "$container" >/dev/null
+                                    exit "$status"
+                                '''
+                            }
+                            if (params.ENFORCE_QUALITY_GATES) {
+                                check()
+                            } else {
+                                warnError('Pytest failed against the existing baseline') {
+                                    check()
+                                }
+                            }
+                        }
+                    }
+                    post {
+                        always {
+                            junit allowEmptyResults: true, testResults: 'test-results/junit.xml'
+                            archiveArtifacts allowEmptyArchive: true, artifacts: 'coverage.xml'
+                        }
+                    }
+                }
+                stage('Dependency audit') {
+                    steps {
+                        script {
+                            def check = {
+                                sh 'docker run --rm "$CI_IMAGE" python -m pip_audit --requirement requirements.txt'
+                            }
+                            if (params.ENFORCE_QUALITY_GATES) {
+                                check()
+                            } else {
+                                warnError('Dependency audit failed') {
+                                    check()
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        stage('Build application image') {
+            steps {
+                sh '''#!/usr/bin/env bash
+                    set -Eeuo pipefail
+                    docker build --pull \
+                        --label "org.opencontainers.image.revision=${GIT_COMMIT}" \
+                        --label "org.opencontainers.image.created=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+                        --tag "${IMAGE_REPOSITORY}:${IMAGE_TAG}" \
+                        .
+                '''
+            }
+        }
+
+        stage('Smoke test image') {
+            steps {
+                sh '''#!/usr/bin/env bash
+                    set -Eeuo pipefail
+                    container="fastapi-smoke-${BUILD_NUMBER}"
+                    cleanup() { docker rm --force "$container" >/dev/null 2>&1 || true; }
+                    trap cleanup EXIT
+
+                    docker run --detach --name "$container" "${IMAGE_REPOSITORY}:${IMAGE_TAG}" >/dev/null
+                    for attempt in $(seq 1 24); do
+                        health="$(docker inspect --format='{{.State.Health.Status}}' "$container")"
+                        [[ "$health" == 'healthy' ]] && exit 0
+                        [[ "$health" == 'unhealthy' ]] && break
+                        sleep 5
+                    done
+
+                    docker logs "$container"
+                    exit 1
+                '''
+            }
+        }
+
+        stage('Publish image') {
+            when {
+                expression { params.PUSH_IMAGE }
+            }
+            steps {
+                script {
+                    withCredentials([usernamePassword(
+                        credentialsId: params.REGISTRY_CREDENTIAL_ID,
+                        usernameVariable: 'REGISTRY_USERNAME',
+                        passwordVariable: 'REGISTRY_PASSWORD'
+                    )]) {
+                        sh '''#!/usr/bin/env bash
+                            set -Eeuo pipefail
+                            trap 'docker logout "$REGISTRY_HOST" >/dev/null 2>&1 || true' EXIT
+                            printf '%s' "$REGISTRY_PASSWORD" | docker login \
+                                --username "$REGISTRY_USERNAME" \
+                                --password-stdin "$REGISTRY_HOST"
+                            docker push "${IMAGE_REPOSITORY}:${IMAGE_TAG}"
+                        '''
+                    }
+                }
+            }
+        }
+
+        stage('Deploy API') {
+            when {
+                expression {
+                    def sourceBranch = env.BRANCH_NAME ?: env.GIT_BRANCH ?: ''
+                    return params.DEPLOY && (
+                        sourceBranch == 'main' || sourceBranch.endsWith('/main')
+                    )
+                }
+            }
+            steps {
+                script {
+                    withCredentials([file(
+                        credentialsId: params.ENV_FILE_CREDENTIAL_ID,
+                        variable: 'JENKINS_APP_ENV_FILE'
+                    )]) {
+                        sh '''#!/usr/bin/env bash
+                            set -Eeuo pipefail
+                            project="fastapi-${DEPLOY_ENVIRONMENT}"
+                            container="${project}-api"
+                            runtime_dir="${WORKSPACE}/.cicd-runtime/${DEPLOY_ENVIRONMENT}"
+                            env_file="${runtime_dir}/app.env"
+
+                            mkdir -p "$runtime_dir"
+                            install -m 600 "$JENKINS_APP_ENV_FILE" "$env_file"
+
+                            previous_image="$(docker inspect --format='{{.Config.Image}}' "$container" 2>/dev/null || true)"
+                            export COMPOSE_PROJECT_NAME="$project"
+                            export API_CONTAINER_NAME="$container"
+                            export APP_ENV_FILE="$env_file"
+                            export APP_PORT IMAGE_REPOSITORY IMAGE_TAG
+
+                            rollback() {
+                                echo 'Deployment did not become healthy.' >&2
+                                docker compose --file "$COMPOSE_FILE" logs --no-color api || true
+                                if [[ -n "$previous_image" ]]; then
+                                    echo "Rolling back to $previous_image" >&2
+                                    export IMAGE_REPOSITORY="${previous_image%:*}"
+                                    export IMAGE_TAG="${previous_image##*:}"
+                                    docker compose --file "$COMPOSE_FILE" up --detach --no-deps api
+                                fi
+                                exit 1
+                            }
+
+                            docker compose --file "$COMPOSE_FILE" config --quiet
+                            docker compose --file "$COMPOSE_FILE" up --detach --no-deps api
+
+                            for attempt in $(seq 1 36); do
+                                health="$(docker inspect --format='{{.State.Health.Status}}' "$container" 2>/dev/null || true)"
+                                [[ "$health" == 'healthy' ]] && exit 0
+                                [[ "$health" == 'unhealthy' ]] && rollback
+                                sleep 5
+                            done
+                            rollback
+
+                            # Optional Celery deployment (disabled initially):
+                            # 1. Enable the Celery code/settings and dependencies.
+                            # 2. Uncomment worker and beat in cicd/compose.deploy.yml.
+                            # 3. Replace the API-only command above with:
+                            # docker compose --file "$COMPOSE_FILE" up --detach api worker beat
+                        '''
+                    }
+                }
+            }
+        }
+    }
+
+    post {
+        always {
+            sh '''#!/usr/bin/env bash
+                docker rm --force "fastapi-tests-${BUILD_NUMBER}" \
+                    "fastapi-smoke-${BUILD_NUMBER}" >/dev/null 2>&1 || true
+                docker image rm "$CI_IMAGE" >/dev/null 2>&1 || true
+            '''
+            cleanWs(
+                deleteDirs: true,
+                disableDeferredWipeout: true,
+                notFailBuild: true
+            )
+        }
+        success {
+            echo "Validated image: ${params.IMAGE_REPOSITORY}:${env.IMAGE_TAG}"
+        }
+    }
+}

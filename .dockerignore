@@ -54,12 +54,9 @@ coverage.xml
 # =============================================================================
 # TEST SOURCE
 #
-# Exclude tests from the production Docker image. Remove this entry when tests
-# must run inside the image or during a dedicated test build stage.
+# Tests remain in the build context for cicd/Dockerfile.ci. The production
+# Dockerfile copies only app/, so test source is not included in its image.
 # =============================================================================
-
-tests
-**/tests/
 
 
 # =============================================================================

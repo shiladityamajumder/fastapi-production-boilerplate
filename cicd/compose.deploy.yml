@@ -1,0 +1,109 @@
+services:
+  api:
+    image: "${IMAGE_REPOSITORY:?IMAGE_REPOSITORY is required}:${IMAGE_TAG:?IMAGE_TAG is required}"
+    container_name: "${API_CONTAINER_NAME:-fastapi-service}"
+    restart: unless-stopped
+    init: true
+    stop_grace_period: 30s
+    env_file:
+      - "${APP_ENV_FILE:?APP_ENV_FILE is required}"
+    environment:
+      HOST: "0.0.0.0"
+      PORT: "8000"
+    ports:
+      - "${APP_PORT:-8000}:8000"
+    healthcheck:
+      test:
+        - CMD
+        - curl
+        - --fail
+        - --silent
+        - --show-error
+        - http://127.0.0.1:8000/health/live
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+    mem_limit: "${API_MEMORY_LIMIT:-1g}"
+    cpus: "${API_CPU_LIMIT:-1.0}"
+    networks:
+      - application-network
+
+  # Celery is intentionally disabled because app/worker and the Celery/Redis
+  # dependencies are currently commented out. After enabling them, uncomment
+  # both services and the Jenkins deployment command documented in Jenkinsfile.
+  #
+  # worker:
+  #   image: "${IMAGE_REPOSITORY:?IMAGE_REPOSITORY is required}:${IMAGE_TAG:?IMAGE_TAG is required}"
+  #   container_name: "${WORKER_CONTAINER_NAME:-fastapi-worker}"
+  #   restart: unless-stopped
+  #   init: true
+  #   stop_grace_period: 60s
+  #   env_file:
+  #     - "${APP_ENV_FILE:?APP_ENV_FILE is required}"
+  #   command:
+  #     - celery
+  #     - --app=app.worker.celery_app:celery_app
+  #     - worker
+  #     - --loglevel=INFO
+  #   security_opt:
+  #     - no-new-privileges:true
+  #   cap_drop:
+  #     - ALL
+  #   tmpfs:
+  #     - /tmp:size=64m,mode=1777
+  #   logging:
+  #     driver: json-file
+  #     options:
+  #       max-size: "10m"
+  #       max-file: "5"
+  #   mem_limit: "${WORKER_MEMORY_LIMIT:-1g}"
+  #   cpus: "${WORKER_CPU_LIMIT:-1.0}"
+  #   networks:
+  #     - application-network
+  #
+  # beat:
+  #   image: "${IMAGE_REPOSITORY:?IMAGE_REPOSITORY is required}:${IMAGE_TAG:?IMAGE_TAG is required}"
+  #   container_name: "${BEAT_CONTAINER_NAME:-fastapi-beat}"
+  #   restart: unless-stopped
+  #   init: true
+  #   stop_grace_period: 30s
+  #   env_file:
+  #     - "${APP_ENV_FILE:?APP_ENV_FILE is required}"
+  #   command:
+  #     - celery
+  #     - --app=app.worker.celery_app:celery_beat_app
+  #     - beat
+  #     - --loglevel=INFO
+  #     - --schedule=/tmp/celerybeat-schedule
+  #   security_opt:
+  #     - no-new-privileges:true
+  #   cap_drop:
+  #     - ALL
+  #   tmpfs:
+  #     - /tmp:size=64m,mode=1777
+  #   logging:
+  #     driver: json-file
+  #     options:
+  #       max-size: "10m"
+  #       max-file: "5"
+  #   mem_limit: "${BEAT_MEMORY_LIMIT:-512m}"
+  #   cpus: "${BEAT_CPU_LIMIT:-0.5}"
+  #   networks:
+  #     - application-network
+
+networks:
+  application-network:
+    name: "${COMPOSE_PROJECT_NAME:-fastapi}-network"
+    driver: bridge
