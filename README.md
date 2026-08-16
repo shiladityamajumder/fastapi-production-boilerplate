@@ -20,6 +20,13 @@ and production-oriented Python microservices.
 
 </div>
 
+## Documentation map
+
+- [Architecture](Architecture.md)
+- [API reference](docs/API.md)
+- [Deployment runbook](docs/DEPLOYMENT.md)
+- [Environment template](.env.example)
+
 ---
 
 ## 📌 Overview
