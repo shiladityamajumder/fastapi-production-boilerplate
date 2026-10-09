@@ -32,7 +32,7 @@
 # =============================================================================
 
 # Reuse the runtime dependency file so development and production environments
-# use the same active FastAPI, SQLAlchemy, MySQL, and logging dependencies.
+# use the same active FastAPI, SQLAlchemy, PostgreSQL, and logging dependencies.
 -r requirements.txt
 
 
@@ -122,18 +122,19 @@ ipdb>=0.13,<1.0
 # Uncomment only when the corresponding adapter and integration tests are
 # enabled.
 #
-# These packages are intentionally not installed by default because MySQL is
-# currently the only active database integration.
+# PostgreSQL tests use the runtime asyncpg dependency from requirements.txt.
 # =============================================================================
 
 
 # -----------------------------------------------------------------------------
 # POSTGRESQL TEST SUPPORT
 #
-# Required only for PostgreSQL adapter integration tests.
+# The PostgreSQL driver is installed from requirements.txt.
 # -----------------------------------------------------------------------------
 
-# asyncpg>=0.30,<1.0
+
+# Alembic CLI and migration runtime used for explicit schema changes.
+alembic>=1.16,<2.0
 
 
 # -----------------------------------------------------------------------------

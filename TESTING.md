@@ -322,8 +322,8 @@ Integration tests validate collaboration with concrete infrastructure.
 
 ### Suitable Integration Test Targets
 
-* MySQL adapter startup,
-* MySQL connectivity,
+* PostgreSQL adapter startup,
+* PostgreSQL connectivity,
 * repository queries,
 * Unit of Work behavior,
 * commit,
@@ -394,7 +394,7 @@ Recommended fixtures:
 * async HTTP client,
 * fake repository,
 * fake Unit of Work,
-* MySQL test session,
+* PostgreSQL test session,
 * test database cleanup,
 * request headers,
 * deterministic timestamps,
@@ -514,7 +514,7 @@ Examples:
 ```text
 test_create_product_returns_conflict_when_code_exists
 test_get_product_returns_not_found_when_id_is_missing
-test_readiness_returns_unavailable_when_mysql_fails
+test_readiness_returns_unavailable_when_postgres_fails
 test_pagination_rejects_page_size_above_limit
 test_openapi_uses_camel_case_fields
 test_uow_rolls_back_when_repository_fails
@@ -552,14 +552,14 @@ import pytest
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_mysql_connectivity(
-    mysql_database,
+async def test_postgres_connectivity(
+    postgres_database,
 ) -> None:
     """
-    Ensure the MySQL adapter can validate connectivity.
+    Ensure the PostgreSQL adapter can validate connectivity.
     """
 
-    await mysql_database.validate_connectivity()
+    await postgres_database.ping()
 ```
 
 Run only integration tests:
@@ -851,8 +851,8 @@ Verify that liveness:
 
 Verify that readiness:
 
-* succeeds when MySQL is available,
-* fails safely when MySQL is unavailable,
+* succeeds when PostgreSQL is available,
+* fails safely when PostgreSQL is unavailable,
 * returns the correct status code,
 * does not expose connection URLs,
 * does not expose raw driver exceptions,
@@ -897,7 +897,7 @@ Configuration tests should verify:
 
 * valid development settings,
 * valid production settings,
-* missing MySQL URL when MySQL is enabled,
+* missing PostgreSQL URL when PostgreSQL is enabled,
 * disabled optional adapters requiring no URL,
 * invalid pool size,
 * invalid timeout,
@@ -908,15 +908,15 @@ Configuration tests should verify:
 ### Example
 
 ```python
-def test_mysql_url_is_required_when_mysql_is_enabled() -> None:
+def test_postgres_url_is_required_when_postgres_is_enabled() -> None:
     """
-    Ensure MySQL cannot be enabled without a connection URL.
+    Ensure PostgreSQL cannot be enabled without a connection URL.
     """
 
     with pytest.raises(ValidationError):
         AppSettings(
-            ENABLE_MYSQL=True,
-            MYSQL_URL=None,
+            ENABLE_POSTGRES=True,
+            POSTGRES_URL=None,
         )
 ```
 

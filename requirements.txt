@@ -9,11 +9,10 @@
 # - Uvicorn
 # - Pydantic 2
 # - SQLAlchemy 2 async
-# - MySQL through asyncmy
+# - PostgreSQL through asyncpg
 #
 # Currently disabled integrations are retained as commented references:
 #
-# - PostgreSQL
 # - MongoDB
 # - Redis
 # - Microsoft SQL Server
@@ -73,17 +72,15 @@ SQLAlchemy[asyncio]>=2.0.40,<3.0
 
 
 # =============================================================================
-# MYSQL
-#
-# MySQL is the currently active database integration.
+# POSTGRESQL
 # =============================================================================
 
-# Asynchronous MySQL and MariaDB driver used by SQLAlchemy.
+# Asynchronous PostgreSQL driver used by SQLAlchemy and Alembic.
 #
 # Expected SQLAlchemy URL format:
 #
-#     mysql+asyncmy://username:password@hostname:3306/database_name
-asyncmy>=0.2.11,<0.3
+#     postgresql+asyncpg://username:password@hostname:5432/database_name
+asyncpg>=0.30,<1.0
 
 
 # =============================================================================
@@ -104,24 +101,6 @@ python-json-logger>=3.3,<5.0
 # Linux Docker images usually provide timezone information through the
 # operating system, so this dependency is installed only on Windows.
 tzdata>=2025.2; platform_system == "Windows"
-
-
-# =============================================================================
-# POSTGRESQL — CURRENTLY DISABLED
-#
-# Uncomment only after:
-#
-# 1. PostgreSQL settings are enabled in ``app/core/config.py``.
-# 2. The PostgreSQL adapter is enabled in ``app/db/registry.py``.
-# 3. PostgreSQL dependencies are exposed through API dependencies if required.
-# 4. PostgreSQL readiness checks and integration tests are enabled.
-#
-# Expected SQLAlchemy URL format:
-#
-#     postgresql+asyncpg://username:password@hostname:5432/database_name
-# =============================================================================
-
-# asyncpg>=0.30,<1.0
 
 
 # =============================================================================

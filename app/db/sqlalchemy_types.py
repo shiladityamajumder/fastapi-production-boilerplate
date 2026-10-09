@@ -2,9 +2,9 @@
 
 Cross-dialect UTC datetime type and audit-column factories.
 
-MySQL and Microsoft SQL Server datetime columns commonly return timezone-naive
-values. To provide predictable behavior across MySQL, SQL Server, PostgreSQL,
-and SQLite-based tests, this module uses the following policy:
+SQL Server and PostgreSQL-compatible database drivers can return timezone-naive
+values. To provide predictable behavior across supported SQL databases and
+SQLite-based tests, this module uses the following policy:
 
 - application values must be timezone-aware,
 - values are converted to UTC before persistence,

@@ -4,12 +4,11 @@ Lifecycle registry for configured database and cache adapters.
 
 Current active integration:
 
-- MySQL
+- PostgreSQL
 
 Reference implementations retained as commented code:
 
 - Microsoft SQL Server
-- PostgreSQL
 - MongoDB
 - Redis
 
@@ -36,24 +35,22 @@ from app.common.exceptions import (
 )
 from app.core.config import AppSettings  # noqa: TC001
 from app.core.logging import get_logger
-from app.db.mysql import MySQLDatabase
 
 # =============================================================================
 # OPTIONAL DATABASE AND CACHE IMPORTS
 # =============================================================================
 #
-# MySQL is currently the only active database integration.
+# PostgreSQL is currently the only active database integration.
 #
 # To activate another integration:
 #
-# 1. Uncomment its import below.
-# 2. Uncomment its constructor argument and instance attribute.
-# 3. Uncomment its ``from_settings`` initialization block.
-# 4. Uncomment its registration inside the ``adapters`` property.
-# 5. Uncomment its settings in ``app/core/config.py``.
-# 6. Uncomment its API dependencies.
-# 7. Install its required Python package or database driver.
-# 8. Add its connection settings to the environment configuration.
+# 1. Uncomment its constructor argument and instance attribute.
+# 2. Uncomment its ``from_settings`` initialization block.
+# 3. Uncomment its registration inside the ``adapters`` property.
+# 4. Uncomment its settings in ``app/core/config.py``.
+# 5. Uncomment its API dependencies.
+# 6. Install its required Python package or database driver.
+# 7. Add its connection settings to the environment configuration.
 #
 # Multiple integrations may be enabled by uncommenting their complete blocks
 # together.
@@ -80,21 +77,7 @@ from app.db.mysql import MySQLDatabase
 
 
 # -----------------------------------------------------------------------------
-# POSTGRESQL SUPPORT
-#
-# Related files:
-#     app/db/postgres.py
-#     app/core/config.py
-#     app/api/dependencies.py or app/api/dependencies/postgres.py
-#
-# Required package:
-#     asyncpg
-#
-# Required environment configuration:
-#     ENABLE_POSTGRES=true
-#     POSTGRES_URL=...
-# -----------------------------------------------------------------------------
-# from app.db.postgres import PostgreSQLDatabase
+from app.db.postgres import PostgreSQLDatabase
 
 
 # -----------------------------------------------------------------------------
@@ -180,9 +163,9 @@ class HealthStatus:
 class DatabaseRegistry:
     """Own infrastructure adapters configured for the current process.
 
-    MySQL is currently active. Other adapter implementations remain in this
-    file as commented reference blocks and create no imports, clients, engines,
-    pools, startup checks, or shutdown work.
+    PostgreSQL is currently active. Other adapter implementations remain in
+    this file as commented reference blocks and create no imports, clients,
+    engines, pools, startup checks, or shutdown work.
 
     Each FastAPI process and Celery worker child must construct its own
     ``DatabaseRegistry``.
@@ -191,7 +174,7 @@ class DatabaseRegistry:
     def __init__(
         self,
         *,
-        mysql: MySQLDatabase | None = None,
+        postgres: PostgreSQLDatabase | None = None,
         # ---------------------------------------------------------------------
         # MICROSOFT SQL SERVER
         #
@@ -199,12 +182,6 @@ class DatabaseRegistry:
         # ---------------------------------------------------------------------
         # mssql: MSSQLDatabase | None = None,
         # ---------------------------------------------------------------------
-        # POSTGRESQL
-        #
-        # Uncomment together with the PostgreSQL import and all PostgreSQL
-        # blocks below.
-        # ---------------------------------------------------------------------
-        # postgres: PostgreSQLDatabase | None = None,
         # ---------------------------------------------------------------------
         # MONGODB
         #
@@ -222,12 +199,12 @@ class DatabaseRegistry:
         """Initialize the infrastructure registry.
 
         Args:
-            mysql: Optional active MySQL adapter.
+            postgres: Optional active PostgreSQL adapter.
 
-        Optional constructor arguments for MSSQL, PostgreSQL, MongoDB, and Redis
-        are retained as commented reference blocks.
+        Optional constructor arguments for MSSQL, MongoDB, and Redis are
+        retained as commented reference blocks.
         """
-        self.mysql = mysql
+        self.postgres = postgres
 
         # ---------------------------------------------------------------------
         # MICROSOFT SQL SERVER
@@ -235,10 +212,6 @@ class DatabaseRegistry:
         # self.mssql = mssql
 
         # ---------------------------------------------------------------------
-        # POSTGRESQL
-        # ---------------------------------------------------------------------
-        # self.postgres = postgres
-
         # ---------------------------------------------------------------------
         # MONGODB
         # ---------------------------------------------------------------------
@@ -256,21 +229,23 @@ class DatabaseRegistry:
     ) -> DatabaseRegistry:
         """Construct active infrastructure adapters from configuration.
 
-        MySQL is currently the only active integration.
+        PostgreSQL is currently the only active integration.
 
         Args:
             settings: Validated application settings.
 
         Returns:
-            Registry containing the configured MySQL adapter, or an empty
-            registry when MySQL is disabled.
+            Registry containing the configured PostgreSQL adapter, or an empty
+            registry when PostgreSQL is disabled.
 
         Raises:
-            RuntimeError: If MySQL is enabled but incompletely configured.
+            RuntimeError: If PostgreSQL is enabled but incompletely configured.
         """
         return cls(
-            mysql=(
-                MySQLDatabase.from_settings(settings) if settings.ENABLE_MYSQL else None
+            postgres=(
+                PostgreSQLDatabase.from_settings(settings)
+                if settings.ENABLE_POSTGRES
+                else None
             ),
             # -----------------------------------------------------------------
             # MICROSOFT SQL SERVER
@@ -288,20 +263,6 @@ class DatabaseRegistry:
             #     else None
             # ),
             # -----------------------------------------------------------------
-            # POSTGRESQL
-            #
-            # Activation requirements:
-            #     - Uncomment the PostgreSQL import.
-            #     - Uncomment the PostgreSQL constructor argument and attribute.
-            #     - Uncomment this block.
-            #     - Uncomment ENABLE_POSTGRES and related settings in config.py.
-            #     - Install asyncpg.
-            # -----------------------------------------------------------------
-            # postgres=(
-            #     PostgreSQLDatabase.from_settings(settings)
-            #     if settings.ENABLE_POSTGRES
-            #     else None
-            # ),
             # -----------------------------------------------------------------
             # MONGODB
             #
@@ -352,8 +313,8 @@ class DatabaseRegistry:
             InfrastructureAdapter,
         ] = {}
 
-        if self.mysql is not None:
-            configured["mysql"] = self.mysql
+        if self.postgres is not None:
+            configured["postgres"] = self.postgres
 
         # ---------------------------------------------------------------------
         # MICROSOFT SQL SERVER
@@ -364,13 +325,6 @@ class DatabaseRegistry:
         #     configured["mssql"] = self.mssql
 
         # ---------------------------------------------------------------------
-        # POSTGRESQL
-        #
-        # Uncomment together with all other PostgreSQL blocks.
-        # ---------------------------------------------------------------------
-        # if self.postgres is not None:
-        #     configured["postgres"] = self.postgres
-
         # ---------------------------------------------------------------------
         # MONGODB
         #

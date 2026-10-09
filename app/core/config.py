@@ -5,14 +5,13 @@ Typed, immutable, environment-driven application configuration.
 Settings are loaded from environment variables and an optional local ``.env``
 file. Validation is performed once per process through ``get_settings()``.
 
-Current active infrastructure:
+Current active relational database:
 
-- MySQL
+- PostgreSQL through asyncpg
 
 Reference integrations retained as commented code:
 
 - Microsoft SQL Server
-- PostgreSQL
 - MongoDB
 - Redis
 - Celery background jobs
@@ -206,16 +205,23 @@ class AppSettings(BaseSettings):
     SQL_ECHO: bool = False
 
     # =========================================================================
-    # MYSQL - ACTIVE DATABASE
+# POSTGRESQL - ACTIVE DATABASE
     # =========================================================================
 
-    ENABLE_MYSQL: bool = False
-    MYSQL_URL: SecretStr | None = None
+    ENABLE_POSTGRES: bool = False
+    POSTGRES_URL: SecretStr | None = None
 
-    MYSQL_CONNECT_TIMEOUT_SECONDS: int = Field(
+    POSTGRES_CONNECT_TIMEOUT_SECONDS: int = Field(
         default=5,
         ge=1,
     )
+
+    POSTGRES_COMMAND_TIMEOUT_SECONDS: int = Field(
+        default=30,
+        ge=1,
+    )
+
+    POSTGRES_APPLICATION_NAME: str = "fastapi_service"
 
     # =========================================================================
     # MICROSOFT SQL SERVER - COMMENTED REFERENCE
@@ -244,36 +250,9 @@ class AppSettings(BaseSettings):
     # MSSQL_TRUST_SERVER_CERTIFICATE: bool = False
 
     # =========================================================================
-    # POSTGRESQL - COMMENTED REFERENCE
+    # POSTGRESQL - ACTIVE DATABASE
     # =========================================================================
     #
-    # To enable PostgreSQL:
-    #
-    # 1. Uncomment this settings block.
-    # 2. Uncomment ``_validate_postgres_configuration``.
-    # 3. Uncomment its call inside ``validate_cross_field_rules``.
-    # 4. Uncomment ``postgres_url_value``.
-    # 5. Uncomment PostgreSQL sections in ``app/db/registry.py``.
-    # 6. Uncomment PostgreSQL sections in ``app/api/dependencies.py``.
-    # 7. Ensure ``app/db/postgres.py`` is active.
-    # 8. Install ``asyncpg``.
-    # 9. Configure ``ENABLE_POSTGRES`` and ``POSTGRES_URL``.
-    #
-    # ENABLE_POSTGRES: bool = False
-    # POSTGRES_URL: SecretStr | None = None
-    #
-    # POSTGRES_CONNECT_TIMEOUT_SECONDS: int = Field(
-    #     default=5,
-    #     ge=1,
-    # )
-    #
-    # POSTGRES_COMMAND_TIMEOUT_SECONDS: int = Field(
-    #     default=30,
-    #     ge=1,
-    # )
-    #
-    # POSTGRES_APPLICATION_NAME: str = ""
-
     # =========================================================================
     # MONGODB - COMMENTED REFERENCE
     # =========================================================================
@@ -629,7 +608,7 @@ class AppSettings(BaseSettings):
 
         return normalized
 
-    @field_validator("TRUSTED_PROXY_IPS")
+    @field_validator("TRUSTED_PROXY_IPS", "POSTGRES_APPLICATION_NAME")
     @classmethod
     def normalize_optional_strings(
         cls,
@@ -659,7 +638,7 @@ class AppSettings(BaseSettings):
             Validated settings instance.
         """
         self._validate_database_pool_configuration()
-        self._validate_mysql_configuration()
+        self._validate_postgres_configuration()
 
         # Optional database and cache validation calls belong here when their
         # respective integrations are enabled.
@@ -692,33 +671,28 @@ class AppSettings(BaseSettings):
                 f"{_MAX_SQL_CONNECTIONS_PER_PROCESS} connections per process"
             )
 
-    def _validate_mysql_configuration(
+    def _validate_postgres_configuration(
         self,
     ) -> None:
-        """Validate MySQL configuration when MySQL is enabled.
+        """Validate PostgreSQL configuration when it is enabled.
 
         Raises:
             ValueError: If the URL is missing, invalid, or uses an unsupported
                 asynchronous driver.
         """
-        if not self.ENABLE_MYSQL:
+        if not self.ENABLE_POSTGRES:
             return
 
         url = self._required_secret(
-            self.MYSQL_URL,
-            "MYSQL_URL",
+            self.POSTGRES_URL,
+            "POSTGRES_URL",
         )
 
         self._validate_url_prefix(
             value=url,
-            name="MYSQL_URL",
-            allowed_prefixes=(
-                "mysql+asyncmy://",
-                "mysql+aiomysql://",
-            ),
-            message=(
-                "MYSQL_URL must use mysql+asyncmy or mysql+aiomysql"
-            ),
+            name="POSTGRES_URL",
+            allowed_prefixes=("postgresql+asyncpg://",),
+            message="POSTGRES_URL must use postgresql+asyncpg",
         )
 
     def _validate_cors_configuration(
@@ -925,29 +899,29 @@ class AppSettings(BaseSettings):
     ) -> tuple[str, ...]:
         """Return names of active database integrations.
 
-        MySQL is currently the only active database integration.
+        PostgreSQL is currently the only active database integration.
 
         Returns:
             Enabled database names.
         """
         enabled: list[str] = []
 
-        if self.ENABLE_MYSQL:
-            enabled.append("mysql")
+        if self.ENABLE_POSTGRES:
+            enabled.append("postgres")
 
         return tuple(enabled)
 
     @property
-    def mysql_url_value(
+    def postgres_url_value(
         self,
     ) -> str | None:
-        """Return the unwrapped MySQL connection URL.
+        """Return the unwrapped PostgreSQL connection URL.
 
         Returns:
-            MySQL connection URL or ``None``.
+            PostgreSQL connection URL or ``None``.
         """
         return self._optional_secret_value(
-            self.MYSQL_URL
+            self.POSTGRES_URL
         )
 
 

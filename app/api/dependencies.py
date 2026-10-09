@@ -4,16 +4,15 @@ FastAPI dependency providers for application settings and infrastructure.
 
 Current active database integration:
 
-- MySQL
+- PostgreSQL
 
 Reference integrations retained as commented code:
 
 - Microsoft SQL Server
-- PostgreSQL
 - MongoDB
 - Redis application client
 
-Every SQLAlchemy session and Unit of Work is request-scoped. The MySQL engine
+Every SQLAlchemy session and Unit of Work is request-scoped. The PostgreSQL engine
 and session factory remain process-scoped and are owned by
 ``DatabaseRegistry``.
 
@@ -42,7 +41,7 @@ from app.common.exceptions import (
     InfrastructureUnavailableError,
 )
 from app.core.config import AppSettings
-from app.db.mysql import MySQLDatabase
+from app.db.postgres import PostgreSQLDatabase
 from app.db.registry import DatabaseRegistry
 from app.db.uow import SQLAlchemyUnitOfWork
 
@@ -50,7 +49,7 @@ from app.db.uow import SQLAlchemyUnitOfWork
 # OPTIONAL DATABASE AND CACHE IMPORTS
 # =============================================================================
 #
-# MySQL is currently the only active database integration.
+# PostgreSQL is currently the only active database integration.
 #
 # To enable another integration:
 #
@@ -193,48 +192,48 @@ def get_database_registry(
 
 
 # =============================================================================
-# MYSQL DEPENDENCIES - ACTIVE
+# POSTGRESQL DEPENDENCIES - ACTIVE
 # =============================================================================
 
 
-def get_mysql_database(
+def get_postgres_database(
     registry: Annotated[
         DatabaseRegistry,
         Depends(get_database_registry),
     ],
-) -> MySQLDatabase:
-    """Return the configured MySQL adapter.
+) -> PostgreSQLDatabase:
+    """Return the configured PostgreSQL adapter.
 
     Args:
         registry: Process-local infrastructure registry.
 
     Returns:
-        Configured MySQL adapter.
+        Configured PostgreSQL adapter.
 
     Raises:
-        InfrastructureUnavailableError: If MySQL is disabled or unavailable.
+        InfrastructureUnavailableError: If PostgreSQL is disabled or unavailable.
     """
-    if registry.mysql is None:
+    if registry.postgres is None:
         raise InfrastructureUnavailableError(
-            "MySQL is not configured for this service."
+            "PostgreSQL is not configured for this service."
         )
 
-    return registry.mysql
+    return registry.postgres
 
 
-async def get_mysql_session(
+async def get_postgres_session(
     database: Annotated[
-        MySQLDatabase,
-        Depends(get_mysql_database),
+        PostgreSQLDatabase,
+        Depends(get_postgres_database),
     ],
 ) -> AsyncIterator[AsyncSession]:
-    """Yield one request-scoped MySQL session.
+    """Yield one request-scoped PostgreSQL session.
 
     The adapter rolls back any transaction left open by the caller and closes
     the session during dependency cleanup.
 
     Args:
-        database: Configured MySQL adapter.
+        database: Configured PostgreSQL adapter.
 
     Yields:
         Isolated asynchronous SQLAlchemy session.
@@ -243,27 +242,27 @@ async def get_mysql_session(
         yield session
 
 
-async def get_mysql_uow(
+async def get_postgres_uow(
     database: Annotated[
-        MySQLDatabase,
-        Depends(get_mysql_database),
+        PostgreSQLDatabase,
+        Depends(get_postgres_database),
     ],
 ) -> AsyncIterator[SQLAlchemyUnitOfWork]:
-    """Yield one request-scoped MySQL Unit of Work.
+    """Yield one request-scoped PostgreSQL Unit of Work.
 
     The Unit of Work creates its session only when entered through
     ``async with``. Dependency cleanup closes any session or transaction left
     active by an interrupted request.
 
     Args:
-        database: Configured MySQL adapter.
+        database: Configured PostgreSQL adapter.
 
     Yields:
         Request-scoped SQLAlchemy Unit of Work.
     """
     unit_of_work = SQLAlchemyUnitOfWork(
         session_factory=database.session_factory,
-        database_name="mysql",
+        database_name="postgres",
     )
 
     try:
@@ -450,19 +449,19 @@ DatabaseRegistryDep = Annotated[
     Depends(get_database_registry),
 ]
 
-MySQLDatabaseDep = Annotated[
-    MySQLDatabase,
-    Depends(get_mysql_database),
+PostgreSQLDatabaseDep = Annotated[
+    PostgreSQLDatabase,
+    Depends(get_postgres_database),
 ]
 
-MySQLSessionDep = Annotated[
+PostgreSQLSessionDep = Annotated[
     AsyncSession,
-    Depends(get_mysql_session),
+    Depends(get_postgres_session),
 ]
 
-MySQLUOWDep = Annotated[
+PostgreSQLUOWDep = Annotated[
     SQLAlchemyUnitOfWork,
-    Depends(get_mysql_uow),
+    Depends(get_postgres_uow),
 ]
 
 # =============================================================================
@@ -528,15 +527,15 @@ MySQLUOWDep = Annotated[
 
 __all__ = [
     "DatabaseRegistryDep",
-    "MySQLDatabaseDep",
-    "MySQLSessionDep",
-    "MySQLUOWDep",
+    "PostgreSQLDatabaseDep",
+    "PostgreSQLSessionDep",
+    "PostgreSQLUOWDep",
     "SettingsDep",
     "get_app_settings",
     "get_database_registry",
-    "get_mysql_database",
-    "get_mysql_session",
-    "get_mysql_uow",
+    "get_postgres_database",
+    "get_postgres_session",
+    "get_postgres_uow",
     # -------------------------------------------------------------------------
     # MICROSOFT SQL SERVER
     # -------------------------------------------------------------------------

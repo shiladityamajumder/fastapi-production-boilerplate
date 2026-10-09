@@ -8,7 +8,7 @@
   <img src="https://img.shields.io/badge/Python-3.12%2B-3776AB?logo=python&logoColor=white" alt="Python 3.12+">
   <img src="https://img.shields.io/badge/FastAPI-Async-009688?logo=fastapi&logoColor=white" alt="FastAPI">
   <img src="https://img.shields.io/badge/SQLAlchemy-2.x-D71F00?logo=sqlalchemy&logoColor=white" alt="SQLAlchemy 2">
-  <img src="https://img.shields.io/badge/MySQL-Async-4479A1?logo=mysql&logoColor=white" alt="MySQL">
+  <img src="https://img.shields.io/badge/PostgreSQL-Async-4169E1?logo=postgresql&logoColor=white" alt="PostgreSQL">
   <img src="https://img.shields.io/badge/Docker-Ready-2496ED?logo=docker&logoColor=white" alt="Docker">
   <img src="https://img.shields.io/badge/Tests-pytest-0A9EDC?logo=pytest&logoColor=white" alt="pytest">
 </p>
@@ -50,11 +50,11 @@ It includes a clean separation between:
 * Docker configuration,
 * optional background worker infrastructure.
 
-The project currently runs as a clean FastAPI service with asynchronous MySQL
-support.
+The project runs as a FastAPI service with asynchronous PostgreSQL support
+through SQLAlchemy 2 and asyncpg. Alembic manages schema revisions explicitly.
 
-PostgreSQL, Microsoft SQL Server, MongoDB, Redis, and Celery remain available as
-disabled reference implementations and can be enabled later when required.
+Microsoft SQL Server, MongoDB, Redis, and Celery remain disabled reference
+integrations.
 
 ---
 
@@ -85,7 +85,8 @@ disabled reference implementations and can be enabled later when required.
 | Pydantic 2         | Request, response, and configuration validation |
 | Pydantic Settings  | Environment-based configuration                 |
 | SQLAlchemy 2       | ORM and database query layer                    |
-| asyncmy            | Asynchronous MySQL driver                       |
+| asyncpg            | Asynchronous PostgreSQL driver                  |
+| Alembic            | Explicit PostgreSQL schema migrations           |
 | python-json-logger | Structured JSON logging                         |
 | Docker             | Containerized deployment                        |
 
@@ -106,7 +107,6 @@ disabled reference implementations and can be enabled later when required.
 
 The following integrations are intentionally disabled:
 
-* PostgreSQL
 * Microsoft SQL Server
 * MongoDB
 * Redis
@@ -129,7 +129,7 @@ flowchart LR
     Service[Application Service]
     Repository[Repository]
     UOW[Unit of Work]
-    Database[(External MySQL)]
+    Database[(PostgreSQL)]
 
     Client --> Router
     Router --> Service
@@ -213,7 +213,6 @@ fastapi_project_structure/
 │   │   └── request_context.py
 │   ├── db/
 │   │   ├── base.py
-│   │   ├── mysql.py
 │   │   ├── postgres.py
 │   │   ├── mssql.py
 │   │   ├── mongo.py
@@ -272,7 +271,7 @@ event boundaries.
 | Database tables       | snake_case              | `product_locations`    |
 | Database columns      | snake_case              | `created_at`           |
 | Constants             | UPPER_SNAKE_CASE        | `DEFAULT_PAGE_SIZE`    |
-| Environment variables | UPPER_SNAKE_CASE        | `MYSQL_URL`            |
+| Environment variables | UPPER_SNAKE_CASE        | `POSTGRES_URL`         |
 | Event names           | dot-separated lowercase | `product.created`      |
 
 Pydantic aliases should convert external camelCase fields into internal
@@ -314,11 +313,11 @@ TIMEZONE=Asia/Kolkata
 
 
 # =============================================================================
-# MYSQL
+# POSTGRESQL
 # =============================================================================
 
-ENABLE_MYSQL=true
-MYSQL_URL=mysql+asyncmy://username:password@hostname:3306/database_name
+ENABLE_POSTGRES=true
+POSTGRES_URL=postgresql+asyncpg://username:password@localhost:5432/database_name
 ```
 
 Never commit the real `.env` file.
@@ -395,6 +394,9 @@ Copy-Item .env.example .env
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
+After installing the project, the `fastapi-service` command starts the same
+application using the configured `HOST` and `PORT` values.
+
 The service will be available at:
 
 ```text
@@ -442,27 +444,26 @@ It may validate:
 
 * application initialization,
 * required configuration,
-* MySQL connectivity,
+* PostgreSQL connectivity,
 * mandatory infrastructure state.
 
 ---
 
 ## 🐳 Docker
 
-The Docker configuration starts only the FastAPI service.
+Docker Compose starts the FastAPI service and a local PostgreSQL service with a
+persistent volume.
 
 It does not start:
 
-* MySQL,
-* PostgreSQL,
 * MSSQL,
 * MongoDB,
 * Redis,
 * Celery Worker,
 * Celery Beat.
 
-All databases and infrastructure are expected to be external and configured
-through environment variables.
+Other databases and infrastructure remain external and are configured through
+environment variables.
 
 ### Build and start
 
@@ -498,41 +499,47 @@ docker compose build --no-cache
 
 ## 🗄️ Database Architecture
 
-MySQL is the currently active database.
+PostgreSQL is the active database. Docker Compose persists its data in the
+`postgres-data` volume; local Windows Python connects through `localhost`.
 
 Expected SQLAlchemy URL:
 
 ```text
-mysql+asyncmy://username:password@hostname:3306/database_name
+postgresql+asyncpg://username:password@localhost:5432/database_name
 ```
+
+Set `POSTGRES_URL` in `.env` or the process environment. URL-encode reserved
+characters in usernames and passwords. For Compose, keep `POSTGRES_DOCKER_URL`
+in sync with the local URL and use the `postgres` service hostname there.
 
 ### Database Ownership Rules
 
-The application service should map and consume existing database tables.
+Use Alembic to manage schema changes explicitly. The API never creates tables or
+runs migrations during startup. ORM models must inherit from
+`app.db.base.Base`; import model modules from `migrations/env.py` so
+autogeneration sees them. No user or authentication models are included yet.
 
-It should not manage shared database migrations when a dedicated migration
-repository owns the schema.
+After installing `requirements-dev.txt` and setting `ENABLE_POSTGRES=true` plus
+`POSTGRES_URL`, create and apply revisions from the repository root:
 
-Do not use:
-
-```text
-metadata.create_all()
-automatic ORM synchronization
-service startup migrations
-local Alembic revisions for shared tables
+```powershell
+alembic revision --autogenerate -m "describe schema change"
+alembic upgrade head
+alembic downgrade -1
 ```
 
-Recommended platform ownership:
+`alembic downgrade base` reverts all revisions. Review generated migrations
+before applying them. For PostgreSQL on Windows, copy `.env.example` to `.env`,
+replace the placeholder password, and run `docker compose up -d postgres`. The
+Compose service publishes port 5432; keep `POSTGRES_URL` pointed at localhost
+when running Python on Windows.
 
-```text
-Dedicated migration repository
-    ↓
-Owns schema definitions and migrations
+Run the full stack with `docker compose up --build`; Compose overrides the API
+container URL to use the `postgres` service hostname. Apply migrations
+separately with Alembic. Application startup only validates connectivity.
 
-Application microservices
-    ↓
-Map and consume the existing schema
-```
+Alembic revisions in this repository are the reviewed schema history. API
+startup checks connectivity only; operators apply revisions explicitly.
 
 ---
 

@@ -5,8 +5,6 @@
 #
 # It does not create or manage:
 #
-# - MySQL
-# - PostgreSQL
 # - Microsoft SQL Server
 # - MongoDB
 # - Redis
@@ -17,6 +15,28 @@
 # =============================================================================
 
 services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:?Set POSTGRES_DB in .env}
+      POSTGRES_USER: ${POSTGRES_USER:?Set POSTGRES_USER in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - application-network
+
   api:
     # =========================================================================
     # IMAGE BUILD
@@ -43,6 +63,10 @@ services:
     #
     # Manual stops remain stopped until explicitly started again.
     restart: unless-stopped
+
+    depends_on:
+      postgres:
+        condition: service_healthy
 
     # Give Uvicorn time to finish active requests and close database pools.
     stop_grace_period: 30s
@@ -73,6 +97,11 @@ services:
       # Keep the internal container port fixed. The host mapping can be changed
       # independently through APP_PORT.
       PORT: "8000"
+
+      # Use the Compose service hostname inside Docker. The local .env URL
+      # continues to target localhost for Windows-hosted Python execution.
+      ENABLE_POSTGRES: "true"
+      POSTGRES_URL: ${POSTGRES_DOCKER_URL:?Set POSTGRES_DOCKER_URL in .env}
 
       # Celery and worker processes are intentionally disabled.
       #
@@ -169,3 +198,7 @@ networks:
   application-network:
     # Private bridge network for this Compose project.
     driver: bridge
+
+
+volumes:
+  postgres-data:

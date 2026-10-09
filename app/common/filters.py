@@ -2,7 +2,7 @@
 
 Allow-listed SQLAlchemy filtering and search helpers.
 
-These functions support MySQL, Microsoft SQL Server, PostgreSQL, and compatible
+These functions support PostgreSQL, Microsoft SQL Server, and compatible
 SQLAlchemy test databases. They only operate on explicitly supplied columns and
 never convert arbitrary client field names into SQL expressions.
 

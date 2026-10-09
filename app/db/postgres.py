@@ -223,3 +223,129 @@
 # __all__ = [
 #     "PostgreSQLDatabase",
 # ]
+
+"""Asynchronous PostgreSQL engine and session lifecycle adapter."""
+
+from __future__ import annotations
+
+from collections.abc import AsyncIterator  # noqa: TC003
+from contextlib import asynccontextmanager
+from typing import Any  # noqa: TC003
+
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import (
+    AsyncEngine,  # noqa: TC002
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
+
+from app.core.config import AppSettings  # noqa: TC001
+from app.core.logging import get_logger
+
+logger = get_logger(__name__)
+
+
+class PostgreSQLDatabase:
+    """Own one process-local asynchronous PostgreSQL engine and session factory."""
+
+    def __init__(
+        self,
+        *,
+        url: str,
+        settings: AppSettings,
+    ) -> None:
+        """Initialize a PostgreSQL engine from validated settings."""
+        normalized_url = url.strip()
+        if not normalized_url:
+            raise ValueError("PostgreSQL connection URL must not be blank")
+
+        connect_args: dict[str, Any] = {
+            "timeout": settings.POSTGRES_CONNECT_TIMEOUT_SECONDS,
+            "command_timeout": settings.POSTGRES_COMMAND_TIMEOUT_SECONDS,
+        }
+        if settings.POSTGRES_APPLICATION_NAME:
+            connect_args["server_settings"] = {
+                "application_name": settings.POSTGRES_APPLICATION_NAME,
+            }
+
+        self._engine: AsyncEngine = create_async_engine(
+            normalized_url,
+            pool_size=settings.SQL_POOL_SIZE,
+            max_overflow=settings.SQL_MAX_OVERFLOW,
+            pool_timeout=settings.SQL_POOL_TIMEOUT_SECONDS,
+            pool_recycle=settings.SQL_POOL_RECYCLE_SECONDS,
+            pool_pre_ping=settings.SQL_POOL_PRE_PING,
+            pool_use_lifo=settings.SQL_POOL_USE_LIFO,
+            pool_reset_on_return="rollback",
+            connect_args=connect_args,
+            echo=settings.SQL_ECHO,
+            hide_parameters=True,
+        )
+        self._session_factory: async_sessionmaker[AsyncSession] = (
+            async_sessionmaker(
+                bind=self._engine,
+                class_=AsyncSession,
+                autoflush=False,
+                expire_on_commit=False,
+            )
+        )
+
+        logger.info(
+            "PostgreSQL database adapter initialized",
+            extra={
+                "pool_size": settings.SQL_POOL_SIZE,
+                "max_overflow": settings.SQL_MAX_OVERFLOW,
+                "application_name": settings.POSTGRES_APPLICATION_NAME or None,
+            },
+        )
+
+    @classmethod
+    def from_settings(cls, settings: AppSettings) -> PostgreSQLDatabase:
+        """Build this adapter from validated PostgreSQL settings."""
+        if not settings.ENABLE_POSTGRES:
+            raise RuntimeError("PostgreSQL is not enabled")
+
+        url = settings.postgres_url_value
+        if not url:
+            raise RuntimeError("PostgreSQL connection URL is not configured")
+
+        return cls(url=url, settings=settings)
+
+    @property
+    def engine(self) -> AsyncEngine:
+        """Return the process-local async engine."""
+        return self._engine
+
+    @property
+    def session_factory(self) -> async_sessionmaker[AsyncSession]:
+        """Return the process-local async session factory."""
+        return self._session_factory
+
+    @asynccontextmanager
+    async def session(self) -> AsyncIterator[AsyncSession]:
+        """Yield a session and roll back unfinished work before closing it."""
+        session = self._session_factory()
+        try:
+            yield session
+        finally:
+            try:
+                if session.in_transaction():
+                    await session.rollback()
+            finally:
+                await session.close()
+
+    async def ping(self) -> None:
+        """Execute a lightweight connectivity query."""
+        async with self._engine.connect() as connection:
+            await connection.execute(text("SELECT 1"))
+
+        logger.debug("PostgreSQL connectivity verified")
+
+    async def close(self) -> None:
+        """Dispose the engine and all pooled connections."""
+        await self._engine.dispose()
+        logger.info("PostgreSQL database adapter closed")
+
+
+__all__ = ["PostgreSQLDatabase"]

@@ -1,6 +1,6 @@
 # Deployment runbook
 
-Python 3.12+, FastAPI, Uvicorn, Pydantic 2, SQLAlchemy 2 async, asyncmy, and Docker are the active stack. MySQL is the active adapter; other adapters are opt-in references.
+Python 3.12+, FastAPI, Uvicorn, Pydantic 2, SQLAlchemy 2 async, asyncpg, Alembic, and Docker are the active stack. PostgreSQL is the active adapter; other adapters are opt-in references.
 
 ## Local
 

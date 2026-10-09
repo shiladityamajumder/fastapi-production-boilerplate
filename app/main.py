@@ -11,6 +11,7 @@ Business logic and infrastructure implementation must not be placed here.
 
 from __future__ import annotations
 
+import uvicorn
 from fastapi import FastAPI
 
 from app.api.exception_handlers import register_exception_handlers
@@ -120,6 +121,17 @@ def create_app(
     return app
 
 
+def run() -> None:
+    """Run the configured FastAPI application with Uvicorn."""
+    settings = get_settings()
+    uvicorn.run(
+        "app.main:app",
+        host=settings.HOST,
+        port=settings.PORT,
+        reload=settings.DEBUG,
+    )
+
+
 # Default ASGI application imported by Uvicorn:
 #
 #     uvicorn app.main:app
@@ -132,4 +144,5 @@ app = create_app()
 __all__ = [
     "app",
     "create_app",
+    "run",
 ]

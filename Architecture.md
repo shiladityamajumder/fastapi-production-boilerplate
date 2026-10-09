@@ -61,7 +61,7 @@ Every layer has one clear responsibility.
 | **Testability**               | Each layer can be tested without requiring the complete application stack.               |
 | **Explicit transactions**     | Commit and rollback behavior remains visible.                                            |
 | **Operational safety**        | Logging, health checks, graceful shutdown, and configuration validation are centralized. |
-| **Optional integrations**     | Celery, Redis, MongoDB, PostgreSQL, and MSSQL remain opt-in.                             |
+| **Optional integrations**     | Celery, Redis, MongoDB, and MSSQL remain opt-in.                                        |
 | **Microservice independence** | Each service can be deployed, scaled, and changed independently.                         |
 
 ---
@@ -78,7 +78,7 @@ flowchart LR
     Repository[Repository]
     UOW[Unit of Work]
     Registry[Database Registry]
-    Database[(External MySQL)]
+    Database[(PostgreSQL)]
 
     Client --> Gateway
     Gateway --> Middleware
@@ -114,7 +114,7 @@ sequenceDiagram
     participant S as Service
     participant U as Unit of Work
     participant P as Repository
-    participant D as MySQL
+    participant D as PostgreSQL
 
     C->>G: HTTP request
     G->>M: Forward validated request
@@ -415,18 +415,18 @@ app/db/
 
 ### Active Database
 
-MySQL is currently the active database integration.
+PostgreSQL through SQLAlchemy 2 and asyncpg is the active database integration.
 
 Expected URL:
 
 ```text
-mysql+asyncmy://username:password@hostname:3306/database_name
+postgresql+asyncpg://username:password@hostname:5432/database_name
 ```
 
 ### Active Components
 
 ```text
-app/db/mysql.py
+app/db/postgres.py
 app/db/registry.py
 app/db/uow.py
 app/db/base.py
@@ -462,11 +462,11 @@ A database adapter owns:
 ```mermaid
 flowchart LR
     Settings[AppSettings]
-    Adapter[MySQL Adapter]
+    Adapter[PostgreSQL Adapter]
     Engine[AsyncEngine]
     Pool[Connection Pool]
     SessionFactory[Async Session Factory]
-    Database[(External MySQL)]
+    Database[(PostgreSQL)]
 
     Settings --> Adapter
     Adapter --> Engine
@@ -514,15 +514,13 @@ The registry should:
 flowchart TD
     Settings[Validated Settings]
     Registry[Database Registry]
-    MySQL[MySQL Adapter]
-    PostgreSQL[PostgreSQL Adapter - Disabled]
+    PostgreSQL[PostgreSQL Adapter]
     MSSQL[MSSQL Adapter - Disabled]
     Mongo[Mongo Adapter - Disabled]
     Redis[Redis Adapter - Disabled]
 
     Settings --> Registry
-    Registry --> MySQL
-    Registry -. disabled .-> PostgreSQL
+    Registry --> PostgreSQL
     Registry -. disabled .-> MSSQL
     Registry -. disabled .-> Mongo
     Registry -. disabled .-> Redis
@@ -615,7 +613,7 @@ Global dependencies may provide:
 
 * settings,
 * database registry,
-* MySQL adapter,
+* PostgreSQL adapter,
 * Unit of Work,
 * request identity,
 * correlation information.
@@ -718,7 +716,7 @@ Avoid:
 
 ```python
 print(payload)
-logger.info(mysql_url)
+logger.info("Database configuration loaded")
 logger.debug(authorization_header)
 ```
 
@@ -1002,12 +1000,12 @@ flowchart LR
     Ready[/health/ready]
     API[FastAPI Process]
     Registry[Database Registry]
-    MySQL[(External MySQL)]
+    PostgreSQL[(PostgreSQL)]
 
     Live --> API
     Ready --> API
     Ready --> Registry
-    Registry --> MySQL
+    Registry --> PostgreSQL
 ```
 
 ### Liveness
@@ -1027,7 +1025,7 @@ Readiness answers:
 It may validate:
 
 * database registry availability,
-* MySQL connectivity,
+* PostgreSQL connectivity,
 * required configuration,
 * startup initialization state.
 
@@ -1327,35 +1325,24 @@ The authentication service should own token issuance and validation rules.
 
 ---
 
-## 🗃️ 29. Database Migration Ownership
+## 🗃️ 29. Database Migrations
 
-A dedicated migration repository should own database schema changes.
-
-```mermaid
-flowchart TD
-    MigrationRepo[Database Migration Repository]
-    SharedDB[(Shared Database)]
-    ServiceA[Service A]
-    ServiceB[Service B]
-    ServiceC[Service C]
-
-    MigrationRepo --> SharedDB
-    ServiceA --> SharedDB
-    ServiceB --> SharedDB
-    ServiceC --> SharedDB
-```
+Alembic revisions in this repository are the reviewed source of schema changes.
+`migrations/env.py` uses the shared `app.db.base.Base.metadata` and imports
+existing model modules for autogeneration. No domain, user, or authentication
+models are introduced by the database foundation.
 
 ### Application Services Must Not
 
 * run migrations at startup,
 * use automatic schema synchronization,
 * call `metadata.create_all()` in production,
-* create independent revisions for shared schemas,
+* create revisions outside the migration history,
 * change tables without migration coordination.
 
 ### Source of Truth
 
-The migration repository is the source of truth for:
+Alembic revisions are the source of truth for:
 
 * table names,
 * column names,
@@ -1379,7 +1366,7 @@ flowchart TB
     API1[FastAPI Container 1]
     API2[FastAPI Container 2]
     API3[FastAPI Container 3]
-    Database[(Managed External MySQL)]
+    Database[(Managed PostgreSQL)]
     Logging[Centralized Logging]
 
     Gateway --> API1
@@ -1578,7 +1565,7 @@ Test:
 
 * repositories,
 * Unit of Work,
-* MySQL adapter,
+* PostgreSQL adapter,
 * transaction behavior.
 
 ### Contract Tests

@@ -93,7 +93,6 @@ fastapi_project_structure/
 │   │   ├── base.py
 │   │   ├── mongo.py
 │   │   ├── mssql.py
-│   │   ├── mysql.py
 │   │   ├── postgres.py
 │   │   ├── redis_client.py
 │   │   ├── registry.py
@@ -355,7 +354,7 @@ This file may expose:
 
 * application settings,
 * database registry,
-* MySQL adapter,
+* PostgreSQL adapter,
 * Unit of Work,
 * trusted request identity,
 * request and correlation context.
@@ -366,13 +365,13 @@ This file may expose:
 flowchart TD
     Settings[AppSettings]
     Registry[Database Registry]
-    MySQL[MySQL Adapter]
+    PostgreSQL[PostgreSQL Adapter]
     UOW[Unit of Work]
     Router[FastAPI Router]
 
     Settings --> Registry
-    Registry --> MySQL
-    MySQL --> UOW
+    Registry --> PostgreSQL
+    PostgreSQL --> UOW
     UOW --> Router
 ```
 
@@ -449,7 +448,7 @@ Liveness should remain lightweight.
 
 Readiness may check:
 
-* MySQL connectivity,
+* PostgreSQL connectivity,
 * registry initialization,
 * required settings,
 * mandatory application state.
@@ -687,7 +686,7 @@ Single validated configuration source.
 * logging settings,
 * health settings,
 * SQLAlchemy pool settings,
-* MySQL settings,
+* PostgreSQL settings,
 * environment-specific validation,
 * derived configuration helpers.
 
@@ -842,7 +841,6 @@ app/db/
 ├── base.py
 ├── mongo.py
 ├── mssql.py
-├── mysql.py
 ├── postgres.py
 ├── redis_client.py
 ├── registry.py
@@ -868,9 +866,9 @@ The file should remain independent of domain models.
 
 ---
 
-## 🐬 27. `app/db/mysql.py`
+## 🐘 27. `app/db/postgres.py`
 
-Active asynchronous MySQL adapter.
+Active asynchronous PostgreSQL adapter.
 
 ### Responsibilities
 
@@ -885,7 +883,7 @@ Active asynchronous MySQL adapter.
 Expected URL:
 
 ```text
-mysql+asyncmy://username:password@hostname:3306/database_name
+postgresql+asyncpg://username:password@hostname:5432/database_name
 ```
 
 ### It Should Not
@@ -897,23 +895,17 @@ mysql+asyncmy://username:password@hostname:3306/database_name
 
 ---
 
-## 🐘 28. `app/db/postgres.py`
+## 🗃️ 28. Alembic migrations
 
-Disabled PostgreSQL reference adapter.
+Alembic configuration lives in `alembic.ini`; async migration setup is in
+`migrations/env.py` and uses `app.db.base.Base.metadata`.
 
-### Activation Requirements
+Create, apply, or revert revisions from the repository root:
 
-1. install `asyncpg`,
-2. enable PostgreSQL settings,
-3. enable registry integration,
-4. add dependency providers,
-5. add readiness checks,
-6. add integration tests.
-
-Expected URL:
-
-```text
-postgresql+asyncpg://username:password@hostname:5432/database_name
+```powershell
+alembic revision --autogenerate -m "describe schema change"
+alembic upgrade head
+alembic downgrade -1
 ```
 
 ---
@@ -999,8 +991,7 @@ Central infrastructure adapter registry.
 Currently:
 
 ```text
-MySQL: enabled
-PostgreSQL: disabled
+PostgreSQL: enabled when ENABLE_POSTGRES=true
 MSSQL: disabled
 MongoDB: disabled
 Redis: disabled
@@ -1758,7 +1749,7 @@ Builds the FastAPI service image.
 
 ### It Does Not
 
-* start MySQL,
+* start PostgreSQL,
 * start Redis,
 * start Celery,
 * start Beat,
@@ -1810,7 +1801,7 @@ Active packages include:
 * Uvicorn,
 * Pydantic,
 * SQLAlchemy,
-* asyncmy,
+* asyncpg,
 * structured logging.
 
 Optional database and worker packages remain commented.
