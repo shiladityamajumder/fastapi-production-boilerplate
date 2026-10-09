@@ -16,9 +16,8 @@ Reference integrations retained as commented code:
 - Redis
 - Celery background jobs
 
-Unused email, notification, AI, and other external-service configuration is
-intentionally excluded. Such settings should be introduced only when the
-corresponding integration is implemented.
+AWS email, SMS, and object storage are configured independently through the
+authentication module's delivery and storage adapters.
 
 This module is limited to configuration parsing and validation. It must not:
 
@@ -33,6 +32,7 @@ This module is limited to configuration parsing and validation. It must not:
 from __future__ import annotations
 
 import logging
+import re
 from enum import StrEnum
 from functools import lru_cache
 from pathlib import Path
@@ -42,6 +42,8 @@ from zoneinfo import (
     ZoneInfoNotFoundError,
 )
 
+from email_validator import EmailNotValidError, validate_email
+from cryptography.fernet import Fernet
 from pydantic import (
     Field,
     SecretStr,
@@ -58,6 +60,7 @@ from pydantic_settings import (
 # =============================================================================
 
 _MAX_SQL_CONNECTIONS_PER_PROCESS = 200
+_MIN_AUTH_SECRET_LENGTH = 32
 
 
 class Environment(StrEnum):
@@ -223,6 +226,48 @@ class AppSettings(BaseSettings):
 
     POSTGRES_APPLICATION_NAME: str = "fastapi_service"
 
+    # Authentication remains disabled until a strong secret is configured.
+    AUTH_ENABLED: bool = False
+    AUTH_JWT_SECRET_KEY: SecretStr | None = None
+    AUTH_ACCESS_TOKEN_MINUTES: int = Field(default=15, ge=1, le=60)
+    AUTH_REFRESH_TOKEN_DAYS: int = Field(default=30, ge=1, le=90)
+    AUTH_PASSWORD_MIN_LENGTH: int = Field(default=12, ge=12, le=128)
+    AUTH_LOGIN_RATE_LIMIT: int = Field(default=10, ge=1, le=100)
+    AUTH_LOGIN_RATE_WINDOW_SECONDS: int = Field(default=900, ge=60, le=86400)
+    AUTH_OTP_RATE_LIMIT: int = Field(default=3, ge=1, le=20)
+    AUTH_OTP_RATE_WINDOW_SECONDS: int = Field(default=3600, ge=60, le=86400)
+    AUTH_OTP_TTL_SECONDS: int = Field(default=300, ge=60, le=900)
+    AUTH_OTP_MAX_ATTEMPTS: int = Field(default=5, ge=1, le=10)
+    AUTH_ACTION_TOKEN_TTL_SECONDS: int = Field(default=1800, ge=300, le=86400)
+    AUTH_EMAIL_DELIVERY_ENABLED: bool = False
+    AUTH_SMS_DELIVERY_ENABLED: bool = False
+    PROFILE_IMAGE_STORAGE_ENABLED: bool = False
+    AWS_REGION: str | None = None
+    AWS_S3_BUCKET: str | None = None
+    AWS_SES_FROM_EMAIL: str | None = None
+    AWS_SMS_ORIGINATION_IDENTITY: str | None = None
+    AUTH_PUBLIC_BASE_URL: str | None = None
+    AWS_CONNECT_TIMEOUT_SECONDS: int = Field(default=3, ge=1, le=30)
+    AWS_READ_TIMEOUT_SECONDS: int = Field(default=10, ge=1, le=60)
+    BACKGROUND_JOBS_ENABLED: bool = False
+    REDIS_URL: SecretStr | None = None
+    CELERY_RESULT_BACKEND: SecretStr | None = None
+    BACKGROUND_PAYLOAD_ENCRYPTION_KEY: SecretStr | None = None
+    CELERY_TASK_ALWAYS_EAGER: bool = False
+    CELERY_TASK_TIME_LIMIT_SECONDS: int = Field(default=300, ge=10, le=3600)
+    CELERY_TASK_SOFT_TIME_LIMIT_SECONDS: int = Field(default=240, ge=5, le=3599)
+    CELERY_WORKER_CONCURRENCY: int = Field(default=2, ge=1, le=64)
+    CELERY_TASK_MAX_RETRIES: int = Field(default=5, ge=0, le=20)
+    CELERY_OUTBOX_BATCH_SIZE: int = Field(default=100, ge=1, le=1000)
+    CELERY_OUTBOX_POLL_SECONDS: int = Field(default=10, ge=1, le=300)
+    CELERY_OUTBOX_LEASE_SECONDS: int = Field(default=300, ge=30, le=3600)
+    CELERY_OUTBOX_RETENTION_DAYS: int = Field(default=30, ge=1, le=3650)
+    AUTH_SESSION_RETENTION_DAYS: int = Field(default=30, ge=1, le=3650)
+    CELERY_CLEANUP_BATCH_SIZE: int = Field(default=500, ge=1, le=5000)
+    AWS_S3_MAX_UPLOAD_BYTES: int = Field(default=5_242_880, ge=1, le=52_428_800)
+    AWS_S3_UPLOAD_URL_TTL_SECONDS: int = Field(default=300, ge=60, le=900)
+    AWS_S3_DOWNLOAD_URL_TTL_SECONDS: int = Field(default=300, ge=60, le=900)
+
     # =========================================================================
     # MICROSOFT SQL SERVER - COMMENTED REFERENCE
     # =========================================================================
@@ -304,20 +349,11 @@ class AppSettings(BaseSettings):
     # MONGO_WRITE_CONCERN: str = "majority"
 
     # =========================================================================
-    # REDIS - COMMENTED REFERENCE
+    # REDIS - OPTIONAL CACHE REFERENCE
     # =========================================================================
     #
-    # To enable Redis:
-    #
-    # 1. Uncomment this settings block.
-    # 2. Uncomment ``_validate_redis_configuration``.
-    # 3. Uncomment its call inside ``validate_cross_field_rules``.
-    # 4. Uncomment ``redis_url_value``.
-    # 5. Uncomment Redis sections in ``app/db/registry.py``.
-    # 6. Uncomment Redis sections in ``app/api/dependencies.py``.
-    # 7. Ensure ``app/db/redis_client.py`` is active.
-    # 8. Install ``redis``.
-    # 9. Configure ``ENABLE_REDIS`` and ``REDIS_URL``.
+    # Celery uses the active REDIS_URL and settings declared with auth fields.
+    # No general-purpose cache client is created as part of API startup.
     #
     # ENABLE_REDIS: bool = False
     # REDIS_URL: SecretStr | None = None
@@ -351,22 +387,10 @@ class AppSettings(BaseSettings):
     # )
 
     # =========================================================================
-    # CELERY AND BACKGROUND JOBS - COMMENTED REFERENCE
+    # CELERY AND BACKGROUND JOBS - ACTIVE SETTINGS DECLARED ABOVE
     # =========================================================================
     #
-    # To enable Celery:
-    #
-    # 1. Uncomment this settings block.
-    # 2. Uncomment ``_validate_background_jobs_configuration``.
-    # 3. Uncomment its call inside ``validate_cross_field_rules``.
-    # 4. Uncomment the Celery URL validation helper.
-    # 5. Uncomment the Celery derived properties.
-    # 6. Activate the files inside ``app/tasks``.
-    # 7. Install ``celery`` and the selected broker transport dependency.
-    # 8. Configure ``BACKGROUND_JOBS_ENABLED`` and ``CELERY_BROKER_URL``.
-    #
-    # Redis is not automatically required by Celery. Celery may use Redis,
-    # RabbitMQ, or another explicitly supported broker.
+    # Celery configuration is in app/worker; Redis is the supported broker.
     #
     # BACKGROUND_JOBS_ENABLED: bool = False
     #
@@ -624,6 +648,32 @@ class AppSettings(BaseSettings):
         """
         return value.strip()
 
+    @field_validator(
+        "AWS_REGION",
+        "AWS_S3_BUCKET",
+        "AWS_SMS_ORIGINATION_IDENTITY",
+        "AUTH_PUBLIC_BASE_URL",
+    )
+    @classmethod
+    def normalize_aws_settings(cls, value: str | None) -> str | None:
+        """Trim optional AWS identities and action-link configuration."""
+        return value.strip() if value is not None else None
+
+    @field_validator("AWS_SES_FROM_EMAIL")
+    @classmethod
+    def normalize_ses_sender(cls, value: str | None) -> str | None:
+        """Normalize and validate the SES sender mailbox when supplied."""
+        if value is None or not value.strip():
+            return None
+        try:
+            return validate_email(
+                value.strip(), check_deliverability=False
+            ).normalized
+        except EmailNotValidError as exc:
+            raise ValueError(
+                "AWS_SES_FROM_EMAIL must be a valid email address"
+            ) from exc
+
     # =========================================================================
     # CROSS-FIELD VALIDATION
     # =========================================================================
@@ -639,9 +689,8 @@ class AppSettings(BaseSettings):
         """
         self._validate_database_pool_configuration()
         self._validate_postgres_configuration()
-
-        # Optional database and cache validation calls belong here when their
-        # respective integrations are enabled.
+        self._validate_auth_configuration()
+        self._validate_background_jobs_configuration()
 
         self._validate_cors_configuration()
         self._validate_proxy_configuration()
@@ -694,6 +743,109 @@ class AppSettings(BaseSettings):
             allowed_prefixes=("postgresql+asyncpg://",),
             message="POSTGRES_URL must use postgresql+asyncpg",
         )
+
+    def _validate_auth_configuration(self) -> None:
+        """Validate authentication secrets and configured AWS adapters."""
+        if self.AUTH_ENABLED:
+            if not self.ENABLE_POSTGRES:
+                raise ValueError("ENABLE_POSTGRES must be true when AUTH_ENABLED is true")
+            secret = self._required_secret(
+                self.AUTH_JWT_SECRET_KEY,
+                "AUTH_JWT_SECRET_KEY",
+            )
+            if len(secret) < _MIN_AUTH_SECRET_LENGTH:
+                raise ValueError("AUTH_JWT_SECRET_KEY must contain at least 32 characters")
+        elif self.AUTH_JWT_SECRET_KEY is not None:
+            secret = self.AUTH_JWT_SECRET_KEY.get_secret_value().strip()
+            if secret and len(secret) < _MIN_AUTH_SECRET_LENGTH:
+                raise ValueError("AUTH_JWT_SECRET_KEY must contain at least 32 characters")
+
+        aws_enabled = (
+            self.AUTH_EMAIL_DELIVERY_ENABLED
+            or self.AUTH_SMS_DELIVERY_ENABLED
+            or self.PROFILE_IMAGE_STORAGE_ENABLED
+        )
+        if aws_enabled and not (self.AWS_REGION or "").strip():
+            raise ValueError(
+                "AWS_REGION is required when an AWS integration is enabled"
+            )
+        if aws_enabled and not re.fullmatch(
+            r"[a-z]{2}(?:-[a-z0-9]+)+-\d", self.AWS_REGION or ""
+        ):
+            raise ValueError("AWS_REGION must be a valid region identifier")
+        if self.AUTH_EMAIL_DELIVERY_ENABLED:
+            self._require_setting(self.AWS_SES_FROM_EMAIL, "AWS_SES_FROM_EMAIL")
+            self._validate_http_url(self.AUTH_PUBLIC_BASE_URL, "AUTH_PUBLIC_BASE_URL")
+        if self.AUTH_SMS_DELIVERY_ENABLED:
+            self._require_setting(
+                self.AWS_SMS_ORIGINATION_IDENTITY,
+                "AWS_SMS_ORIGINATION_IDENTITY",
+            )
+        if self.PROFILE_IMAGE_STORAGE_ENABLED:
+            self._require_setting(self.AWS_S3_BUCKET, "AWS_S3_BUCKET")
+            bucket = self.AWS_S3_BUCKET or ""
+            if (
+                not 3 <= len(bucket) <= 63
+                or not re.fullmatch(r"[a-z0-9][a-z0-9.-]*[a-z0-9]", bucket)
+                or ".." in bucket
+            ):
+                raise ValueError("AWS_S3_BUCKET must be a valid S3 bucket name")
+
+    def _validate_background_jobs_configuration(self) -> None:
+        """Validate Redis, Celery, and encrypted notification outbox settings."""
+        if self.AUTH_EMAIL_DELIVERY_ENABLED or self.AUTH_SMS_DELIVERY_ENABLED:
+            if not self.BACKGROUND_JOBS_ENABLED:
+                raise ValueError(
+                    "BACKGROUND_JOBS_ENABLED is required for email and SMS delivery"
+                )
+        if not self.BACKGROUND_JOBS_ENABLED:
+            return
+        if not self.ENABLE_POSTGRES:
+            raise ValueError(
+                "ENABLE_POSTGRES must be true when background jobs are enabled"
+            )
+        redis_url = self._required_secret(self.REDIS_URL, "REDIS_URL")
+        self._validate_url_prefix(
+            value=redis_url,
+            name="REDIS_URL",
+            allowed_prefixes=("redis://", "rediss://"),
+            message="REDIS_URL must use redis or rediss",
+        )
+        result_backend = self._optional_secret_value(self.CELERY_RESULT_BACKEND)
+        if result_backend:
+            self._validate_url_prefix(
+                value=result_backend,
+                name="CELERY_RESULT_BACKEND",
+                allowed_prefixes=("redis://", "rediss://"),
+                message="CELERY_RESULT_BACKEND must use redis or rediss",
+            )
+        encryption_key = self._required_secret(
+            self.BACKGROUND_PAYLOAD_ENCRYPTION_KEY,
+            "BACKGROUND_PAYLOAD_ENCRYPTION_KEY",
+        )
+        try:
+            Fernet(encryption_key.encode())
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                "BACKGROUND_PAYLOAD_ENCRYPTION_KEY must be a Fernet key"
+            ) from exc
+        if self.CELERY_TASK_SOFT_TIME_LIMIT_SECONDS >= self.CELERY_TASK_TIME_LIMIT_SECONDS:
+            raise ValueError(
+                "CELERY_TASK_SOFT_TIME_LIMIT_SECONDS must be below the hard limit"
+            )
+
+    @staticmethod
+    def _require_setting(value: str | None, name: str) -> None:
+        if value is None or not value.strip():
+            raise ValueError(f"{name} is required when its integration is enabled")
+
+    @staticmethod
+    def _validate_http_url(value: str | None, name: str) -> None:
+        if value is None:
+            raise ValueError(f"{name} is required when email delivery is enabled")
+        parsed = urlparse(value)
+        if parsed.scheme not in {"https", "http"} or not parsed.netloc:
+            raise ValueError(f"{name} must be a valid HTTP or HTTPS URL")
 
     def _validate_cors_configuration(
         self,
@@ -923,6 +1075,21 @@ class AppSettings(BaseSettings):
         return self._optional_secret_value(
             self.POSTGRES_URL
         )
+
+    @property
+    def redis_url_value(self) -> str | None:
+        """Return the unwrapped Redis broker URL."""
+        return self._optional_secret_value(self.REDIS_URL)
+
+    @property
+    def celery_result_backend_value(self) -> str | None:
+        """Return the optional unwrapped Celery result backend URL."""
+        return self._optional_secret_value(self.CELERY_RESULT_BACKEND)
+
+    @property
+    def background_payload_encryption_key_value(self) -> str | None:
+        """Return the unwrapped encryption key for outbox notification payloads."""
+        return self._optional_secret_value(self.BACKGROUND_PAYLOAD_ENCRYPTION_KEY)
 
 
 @lru_cache(maxsize=1)

@@ -665,3 +665,15 @@
 #     "get_worker_runtime",
 #     "worker_runtime",
 # ]
+
+"""Active worker runtime exports used by Celery lifecycle handlers."""
+
+from app.worker.runtime import WorkerRuntime, worker_runtime
+
+
+def get_worker_runtime() -> WorkerRuntime:
+    """Return the process-local worker runtime."""
+    return worker_runtime
+
+
+__all__ = ["WorkerRuntime", "get_worker_runtime", "worker_runtime"]

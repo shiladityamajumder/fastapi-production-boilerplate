@@ -26,12 +26,48 @@ and production-oriented Python microservices.
 - [API reference](docs/API.md)
 - [Deployment runbook](docs/DEPLOYMENT.md)
 - [Environment template](.env.example)
+- [API reference](docs/API_REFERENCE.md)
+- [Setup guide](docs/SETUP_GUIDE.md)
 
 ---
 
 ## 📌 Overview
 
-This repository provides a reusable FastAPI project structure designed for teams
+This repository provides a production-oriented FastAPI service with async
+PostgreSQL persistence, explicit Alembic migrations, JWT authentication, RBAC,
+audit history, private S3 uploads, optional SES/SMS delivery, and separately
+run Celery worker/Beat processes. Its layered application layout is preserved;
+external AWS and background services are opt-in through validated settings.
+
+**Quick start:** create a Python 3.12+ virtual environment, install
+`requirements.txt` and `requirements-dev.txt`, copy `.env.example` to `.env`,
+configure PostgreSQL when enabling auth, run `alembic upgrade head`, then start
+with `python -m uvicorn app.main:app --reload`. Full Windows, Linux/macOS,
+PostgreSQL, AWS, and admin-bootstrap instructions are in
+[`docs/SETUP_GUIDE.md`](docs/SETUP_GUIDE.md).
+
+The active source layout is:
+
+```text
+app/
+  api/             health, exception handling, and versioned routers
+  common/          response, pagination, filtering, and sorting utilities
+  core/             settings, middleware, request context, and logging
+  db/               PostgreSQL adapter, registry, and Unit of Work
+  modules/auth/     auth, user, RBAC, audit, and provider integration
+  worker/           optional Celery tasks and outbox processing
+  main.py           FastAPI app factory and CLI entry point
+migrations/         Alembic environment and revisions
+docs/               API, setup, deployment, and architecture guidance
+tests/              unit, API, integration, contract, and end-to-end tests
+```
+
+Authentication and stored-file APIs require PostgreSQL and remain disabled
+until `AUTH_ENABLED=true`. S3, SES, SMS, and background delivery are independent
+opt-in features; AWS credentials and verified provider identities must be
+supplied by the runtime. The example module is a template and is not mounted
+under the current v1 router. PostgreSQL migrations are operator-run, not part
+of API startup.
 building multiple backend microservices.
 
 It includes a clean separation between:
@@ -53,8 +89,9 @@ It includes a clean separation between:
 The project runs as a FastAPI service with asynchronous PostgreSQL support
 through SQLAlchemy 2 and asyncpg. Alembic manages schema revisions explicitly.
 
-Microsoft SQL Server, MongoDB, Redis, and Celery remain disabled reference
-integrations.
+Microsoft SQL Server and MongoDB remain disabled reference integrations.
+Redis and Celery provide the optional background notification and maintenance
+processes described below.
 
 ---
 
@@ -87,6 +124,9 @@ integrations.
 | SQLAlchemy 2       | ORM and database query layer                    |
 | asyncpg            | Asynchronous PostgreSQL driver                  |
 | Alembic            | Explicit PostgreSQL schema migrations           |
+| argon2-cffi        | Argon2id password hashing                       |
+| PyJWT              | Signed access JWTs                              |
+| email-validator    | Email identifier validation                     |
 | python-json-logger | Structured JSON logging                         |
 | Docker             | Containerized deployment                        |
 
@@ -189,7 +229,7 @@ ARCHITECTURE.md
 ## 📁 Project Structure
 
 ```text
-fastapi_project_structure/
+fastapi-production-boilerplate/
 ├── app/
 │   ├── api/
 │   │   ├── v1/
@@ -332,7 +372,7 @@ Use `.env.example` to document supported values without including secrets.
 
 ```bash
 git clone <repository-url>
-cd fastapi_project_structure
+cd fastapi-production-boilerplate
 ```
 
 ### 2. Create a virtual environment
@@ -451,16 +491,16 @@ It may validate:
 
 ## 🐳 Docker
 
-Docker Compose starts the FastAPI service and a local PostgreSQL service with a
-persistent volume.
+Docker Compose starts the FastAPI service, PostgreSQL, Redis, Celery workers,
+and a separate Celery Beat scheduler. PostgreSQL and Redis use persistent
+volumes.
 
 It does not start:
 
 * MSSQL,
 * MongoDB,
-* Redis,
-* Celery Worker,
-* Celery Beat.
+* MSSQL,
+* MongoDB.
 
 Other databases and infrastructure remain external and are configured through
 environment variables.
@@ -517,7 +557,7 @@ in sync with the local URL and use the `postgres` service hostname there.
 Use Alembic to manage schema changes explicitly. The API never creates tables or
 runs migrations during startup. ORM models must inherit from
 `app.db.base.Base`; import model modules from `migrations/env.py` so
-autogeneration sees them. No user or authentication models are included yet.
+autogeneration sees the registered feature models, including user and authentication tables.
 
 After installing `requirements-dev.txt` and setting `ENABLE_POSTGRES=true` plus
 `POSTGRES_URL`, create and apply revisions from the repository root:
@@ -650,6 +690,153 @@ Recommended implementation order:
 | `openapi.py`      | OpenAPI metadata and examples               |
 
 ---
+
+## 🔐 User authentication
+
+Authentication is configured with `AUTH_ENABLED=false` by default. To enable
+password and JWT flows, configure PostgreSQL and set `AUTH_ENABLED=true` with a
+random `AUTH_JWT_SECRET_KEY` of at least 32 characters. For example, generate a
+secret locally with `python -c "import secrets; print(secrets.token_urlsafe(48))"`
+and store it only in the environment or secret manager. Do not commit it.
+
+The v1 routes are under `/api/v1/auth`: registration, password login, mobile
+OTP request/verification, token refresh and logout, current-user/profile,
+password reset/change, and email/mobile verification. Public registration
+always creates `USER`. The `create-admin` command bootstraps the first
+`SUPER_ADMIN` under a PostgreSQL advisory lock. It is safe to rerun for that
+same active account and never upgrades an existing account.
+
+The protected `/api/v1/admin` routes provide user search and pagination,
+account updates, role assignment, activation, session revocation, activity,
+and audit history. `ADMIN` can manage ordinary users; only `SUPER_ADMIN` can
+assign or manage administrative roles. Administrative role and status changes
+revoke sessions and increment the account token version. The last active
+`SUPER_ADMIN` cannot be demoted or deactivated. Audit rows are written in the
+same transaction as sensitive changes and exposed read-only through the API.
+
+Email, SMS, and S3 are independently enabled with `AUTH_EMAIL_DELIVERY_ENABLED`,
+`AUTH_SMS_DELIVERY_ENABLED`, and `PROFILE_IMAGE_STORAGE_ENABLED`. Configure
+`AWS_REGION` and only the identity each enabled service needs. Boto3 uses the
+standard credential provider chain (environment, shared profiles, container
+credentials, or an instance/task role); do not add access keys to application
+settings or source control. On a workstation, use `aws configure --profile
+<profile>` and `AWS_PROFILE=<profile>` (or the normal AWS environment variables).
+When a feature is disabled, its API fails closed and does not claim work succeeded.
+
+S3 objects are private. Authenticated clients create an upload form through
+`POST /api/v1/auth/files/uploads`, upload directly to S3, then call
+`POST /api/v1/auth/files/{upload_id}/complete`. The API records owner metadata,
+checks object existence, size, declared type and content signature, then exposes
+short-lived owner-only download URLs. Profile images accept JPEG, PNG, and WebP;
+generic uploads accept those image types, PDF, and UTF-8 text. The configured
+`AWS_S3_MAX_UPLOAD_BYTES` applies to presigned POST conditions and verification.
+Configure bucket CORS for your exact web origins with `POST` and the headers
+returned in the presigned form. Keep Block Public Access enabled and do not add
+public ACLs. Grant the runtime role `s3:PutObject`, `s3:GetObject`, and
+`s3:DeleteObject` only for the application key prefix. The existence check also
+needs `s3:ListBucket` on this bucket restricted by the `s3:prefix` condition to
+`users/*`; do not grant unrestricted bucket listing.
+
+For example, replace the origin below with the deployed frontend origin (and
+add a separate exact origin for local development):
+
+```json
+[
+  {
+    "AllowedOrigins": ["https://app.example.com"],
+    "AllowedMethods": ["POST"],
+    "AllowedHeaders": ["*"],
+    "ExposeHeaders": ["ETag"],
+    "MaxAgeSeconds": 300
+  }
+]
+```
+
+For SES v2, verify the sender identity in the selected region and set
+`AWS_SES_FROM_EMAIL` to that identity. New SES accounts are commonly in the
+sandbox: verify recipient identities too, or request production access before
+sending to arbitrary users. Configure `AUTH_PUBLIC_BASE_URL` for your frontend's
+action-token handler. Tokens are placed in the URL fragment; the frontend should
+read the fragment and POST the token to the existing verification or password
+reset endpoint, then remove it from browser history. Grant the runtime role
+`ses:SendEmail` for the verified identity. Delivery submission failures are
+returned as safe service errors; raw provider details and tokens are not logged
+or returned.
+
+For mobile OTP, set `AWS_SMS_ORIGINATION_IDENTITY` to the approved origination
+identity for your destination countries. AWS End User Messaging SMS may require
+sender registration, phone-number registration, country-specific permissions,
+and production access. Grant `sms-voice:SendTextMessage` only for the approved
+origination identity. OTP destinations must be E.164 numbers.
+
+Tests inject mocked AWS clients and never send real messages or upload objects.
+For an optional local smoke test, use a dedicated AWS profile, a non-production
+bucket and verified SES/SMS identities, keep test numbers controlled, and remove
+the temporary profile and objects afterward.
+
+Apply the checked-in auth, file metadata, and audit revisions with
+`alembic upgrade head`. Create future revisions with
+`alembic revision --autogenerate -m "describe change"`;
+review generated SQL before upgrade. Roll back one revision with
+`alembic downgrade -1`. Migrations are never run during API startup.
+
+To create the first administrator, configure `ENABLE_POSTGRES=true` and
+`POSTGRES_URL`, then run `python -m app.modules.auth.cli` (or the installed
+`create-admin` command). Provide `ADMIN_EMAIL` and
+`ADMIN_USERNAME` in the environment or enter them at the prompts. `ADMIN_PASSWORD`
+may be provided by an environment secret; otherwise the CLI requests it without
+echoing. No default admin account or password exists.
+
+### Background notifications and scheduled work
+
+The API writes notification requests into the encrypted PostgreSQL outbox in
+the same transaction as OTP challenges and email action tokens. API responses
+report `pending`; they do not claim that SES or SMS delivery has completed.
+Celery workers claim and deliver jobs, and Beat dispatches pending rows and
+schedules bounded cleanup. Outbox idempotency keys prevent duplicate job rows;
+worker leases prevent ordinary duplicate publications from sending twice.
+Delivery is retried with capped exponential backoff and jitter for transient
+AWS failures. A process crash after a provider accepts a message but before the
+database records completion can still result in a duplicate; SES and SMS do not
+offer a shared transaction with PostgreSQL.
+
+Generate a Fernet key and keep it in the local `.env` or a secret manager:
+
+```bash
+python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+```
+
+Set `BACKGROUND_PAYLOAD_ENCRYPTION_KEY`, `BACKGROUND_JOBS_ENABLED=true`, and
+the host `REDIS_URL=redis://localhost:6379/0`. Enable the desired email or SMS
+feature flags only after configuring their AWS identities. The Compose services
+use `REDIS_DOCKER_URL=redis://redis:6379/0`; Redis remains on the private Compose
+network and is not published on a host port.
+
+Apply migrations before starting services, then start the separate processes:
+
+```bash
+alembic upgrade head
+docker compose up -d postgres redis
+docker compose up -d api worker beat
+docker compose ps
+```
+
+For local Windows development, start Redis and PostgreSQL first, then run the
+worker with Celery's `solo` pool and start Beat in another terminal:
+
+```powershell
+$env:BACKGROUND_JOBS_ENABLED = "true"
+celery -A app.worker.celery_app:celery_app worker --pool=solo --loglevel=INFO
+celery -A app.worker.celery_app:celery_app beat --loglevel=INFO
+```
+
+Check worker availability with `celery -A app.worker.celery_app:celery_app
+inspect ping`; view service failures with `docker compose logs -f worker beat`.
+If outbox rows remain pending, check Redis connectivity and Beat logs. If rows
+remain processing, check worker health and lease recovery logs. Do not rotate the
+outbox encryption key while pending jobs remain, or those payloads cannot be
+decrypted. Production Redis should use private networking, authentication, and
+TLS; local Compose intentionally keeps it private to its bridge network.
 
 ## 🧪 Testing
 
@@ -868,7 +1055,8 @@ app/worker/
 └── signals.py
 ```
 
-Celery is currently disabled.
+Background jobs are optional and disabled by default. When enabled, FastAPI,
+the Celery worker, and Beat scheduler run as separate processes.
 
 When enabled:
 

@@ -1,15 +1,12 @@
 # =============================================================================
 # FASTAPI SERVICE
 #
-# This Compose file starts only the FastAPI application.
+# This Compose file starts the FastAPI application and background processes.
 #
 # It does not create or manage:
 #
 # - Microsoft SQL Server
 # - MongoDB
-# - Redis
-# - Celery workers
-# - Celery Beat
 #
 # External infrastructure must be reachable through URLs configured in .env.
 # =============================================================================
@@ -34,6 +31,20 @@ services:
       timeout: 5s
       retries: 5
       start_period: 10s
+    networks:
+      - application-network
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
     networks:
       - application-network
 
@@ -103,10 +114,9 @@ services:
       ENABLE_POSTGRES: "true"
       POSTGRES_URL: ${POSTGRES_DOCKER_URL:?Set POSTGRES_DOCKER_URL in .env}
 
-      # Celery and worker processes are intentionally disabled.
-      #
-      # Keep this commented until Celery settings are restored in config.py.
-      # BACKGROUND_JOBS_ENABLED: "false"
+      BACKGROUND_JOBS_ENABLED: "true"
+      REDIS_URL: ${REDIS_DOCKER_URL:?Set REDIS_DOCKER_URL in .env}
+      BACKGROUND_PAYLOAD_ENCRYPTION_KEY: ${BACKGROUND_PAYLOAD_ENCRYPTION_KEY:?Generate a Fernet key in .env}
 
     # =========================================================================
     # PORT MAPPING
@@ -189,6 +199,70 @@ services:
     networks:
       - application-network
 
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: fastapi-service:latest
+    restart: unless-stopped
+    init: true
+    stop_grace_period: 60s
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      ENABLE_POSTGRES: "true"
+      POSTGRES_URL: ${POSTGRES_DOCKER_URL:?Set POSTGRES_DOCKER_URL in .env}
+      BACKGROUND_JOBS_ENABLED: "true"
+      REDIS_URL: ${REDIS_DOCKER_URL:?Set REDIS_DOCKER_URL in .env}
+      BACKGROUND_PAYLOAD_ENCRYPTION_KEY: ${BACKGROUND_PAYLOAD_ENCRYPTION_KEY:?Generate a Fernet key in .env}
+      CELERY_WORKER_CONCURRENCY: ${CELERY_WORKER_CONCURRENCY:-2}
+    command:
+      - celery
+      - -A
+      - app.worker.celery_app:celery_app
+      - worker
+      - --loglevel=INFO
+      - --concurrency=${CELERY_WORKER_CONCURRENCY:-2}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - application-network
+
+  beat:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: fastapi-service:latest
+    restart: unless-stopped
+    init: true
+    stop_grace_period: 30s
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      ENABLE_POSTGRES: "true"
+      POSTGRES_URL: ${POSTGRES_DOCKER_URL:?Set POSTGRES_DOCKER_URL in .env}
+      BACKGROUND_JOBS_ENABLED: "true"
+      REDIS_URL: ${REDIS_DOCKER_URL:?Set REDIS_DOCKER_URL in .env}
+      BACKGROUND_PAYLOAD_ENCRYPTION_KEY: ${BACKGROUND_PAYLOAD_ENCRYPTION_KEY:?Generate a Fernet key in .env}
+    command:
+      - celery
+      - -A
+      - app.worker.celery_app:celery_app
+      - beat
+      - --loglevel=INFO
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - application-network
+
 
 # =============================================================================
 # APPLICATION NETWORK
@@ -202,3 +276,4 @@ networks:
 
 volumes:
   postgres-data:
+  redis-data:

@@ -419,3 +419,80 @@
 #     "CelerySettings",
 #     "WorkerConfig",
 # ]
+
+"""Active Celery worker configuration builders."""
+
+from __future__ import annotations
+
+from datetime import timedelta
+from typing import Any
+
+from celery.schedules import schedule
+from kombu import Exchange, Queue
+
+from app.core.config import AppSettings
+
+
+def build_celery_settings(settings: AppSettings) -> dict[str, Any]:
+    """Build process-safe Celery settings without opening connections."""
+    broker = settings.redis_url_value or "memory://"
+    backend = settings.celery_result_backend_value or broker
+    exchange = Exchange("app", type="direct", durable=True)
+    return {
+        "broker_url": broker,
+        "result_backend": backend,
+        "task_serializer": "json",
+        "result_serializer": "json",
+        "accept_content": ["json"],
+        "timezone": "UTC",
+        "enable_utc": True,
+        "task_ignore_result": True,
+        "task_store_errors_even_if_ignored": False,
+        "task_acks_late": True,
+        "task_reject_on_worker_lost": True,
+        "worker_prefetch_multiplier": 1,
+        "worker_concurrency": settings.CELERY_WORKER_CONCURRENCY,
+        "task_time_limit": settings.CELERY_TASK_TIME_LIMIT_SECONDS,
+        "task_soft_time_limit": settings.CELERY_TASK_SOFT_TIME_LIMIT_SECONDS,
+        "task_always_eager": settings.CELERY_TASK_ALWAYS_EAGER,
+        "task_eager_propagates": True,
+        "broker_connection_retry_on_startup": True,
+        "broker_connection_max_retries": 10,
+        "broker_transport_options": {"visibility_timeout": 3600},
+        "task_default_queue": "default",
+        "task_default_exchange": "app",
+        "task_default_exchange_type": "direct",
+        "task_default_routing_key": "default",
+        "task_queues": (
+            Queue("default", exchange, routing_key="default", durable=True),
+            Queue("notifications", exchange, routing_key="notifications", durable=True),
+            Queue("maintenance", exchange, routing_key="maintenance", durable=True),
+        ),
+        "task_routes": {
+            "app.worker.tasks.notifications.*": {
+                "queue": "notifications",
+                "routing_key": "notifications",
+            },
+            "app.worker.tasks.maintenance.*": {
+                "queue": "maintenance",
+                "routing_key": "maintenance",
+            },
+        },
+        "beat_schedule": {
+            "dispatch-notification-outbox": {
+                "task": "app.worker.tasks.notifications.dispatch_pending",
+                "schedule": schedule(settings.CELERY_OUTBOX_POLL_SECONDS),
+            },
+            "cleanup-authentication-state": {
+                "task": "app.worker.tasks.maintenance.cleanup_auth_state",
+                "schedule": timedelta(hours=1),
+            },
+            "recover-stale-outbox-jobs": {
+                "task": "app.worker.tasks.maintenance.recover_stale_outbox",
+                "schedule": timedelta(minutes=1),
+            },
+        },
+    }
+
+
+__all__ = ["build_celery_settings"]

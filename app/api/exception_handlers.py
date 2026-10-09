@@ -20,6 +20,7 @@ from fastapi import (
 )
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from starlette.exceptions import (
     HTTPException as StarletteHTTPException,
 )
@@ -158,6 +159,9 @@ def _status_for(
     Returns:
         HTTP status code.
     """
+    if error.code == "RATE_LIMITED":
+        return status.HTTP_429_TOO_MANY_REQUESTS
+
     for error_type, status_code in _ERROR_STATUS:
         if isinstance(
             error,
@@ -426,6 +430,46 @@ async def unhandled_exception_handler(
     )
 
 
+async def database_integrity_exception_handler(
+    request: Request,
+    exc: IntegrityError,
+) -> JSONResponse:
+    """Map unexpected constraint failures to a safe resource conflict."""
+    logger.warning(
+        "Database constraint rejected a request",
+        extra={
+            "http_method": request.method,
+            "http_route": _route_template(request),
+            "exception_type": type(exc).__name__,
+        },
+    )
+    return APIResponse.error(
+        error_code="RESOURCE_CONFLICT",
+        message="The request conflicts with an existing resource.",
+        status_code=status.HTTP_409_CONFLICT,
+    )
+
+
+async def database_exception_handler(
+    request: Request,
+    exc: SQLAlchemyError,
+) -> JSONResponse:
+    """Map persistence failures to sanitized service-unavailable responses."""
+    logger.error(
+        "Database operation failed",
+        extra={
+            "http_method": request.method,
+            "http_route": _route_template(request),
+            "exception_type": type(exc).__name__,
+        },
+    )
+    return APIResponse.error(
+        error_code="DATABASE_ERROR",
+        message="A persistence operation failed.",
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+    )
+
+
 def register_exception_handlers(
     app: FastAPI,
 ) -> None:
@@ -451,6 +495,14 @@ def register_exception_handlers(
             http_exception_handler,
         ),
         (
+            IntegrityError,
+            database_integrity_exception_handler,
+        ),
+        (
+            SQLAlchemyError,
+            database_exception_handler,
+        ),
+        (
             Exception,
             unhandled_exception_handler,
         ),
@@ -465,6 +517,8 @@ def register_exception_handlers(
 
 __all__ = [
     "app_error_handler",
+    "database_exception_handler",
+    "database_integrity_exception_handler",
     "http_exception_handler",
     "register_exception_handlers",
     "unhandled_exception_handler",

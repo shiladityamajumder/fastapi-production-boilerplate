@@ -60,6 +60,9 @@ pydantic>=2.11,<3.0
 # Environment-variable and .env-based application configuration.
 pydantic-settings>=2.10,<3.0
 
+# Email address validation for account identifiers.
+email-validator>=2.2,<3.0
+
 
 # =============================================================================
 # DATABASE ORM
@@ -81,6 +84,13 @@ SQLAlchemy[asyncio]>=2.0.40,<3.0
 #
 #     postgresql+asyncpg://username:password@hostname:5432/database_name
 asyncpg>=0.30,<1.0
+
+# Password hashing and compact signed JWT access tokens.
+argon2-cffi>=23.1,<26.0
+PyJWT>=2.10,<3.0
+
+# AWS SDK; credentials are resolved through boto3's standard provider chain.
+boto3>=1.38,<2.0
 
 
 # =============================================================================
@@ -155,7 +165,7 @@ tzdata>=2025.2; platform_system == "Windows"
 #     rediss://username:password@hostname:6379/0
 # =============================================================================
 
-# redis>=6.2,<8.0
+redis>=6.2,<8.0
 
 
 # =============================================================================
@@ -187,23 +197,15 @@ tzdata>=2025.2; platform_system == "Windows"
 
 
 # =============================================================================
-# CELERY WORKER — CURRENTLY DISABLED
+# CELERY WORKER AND ENCRYPTED OUTBOX
 #
-# The FastAPI container currently runs only the web service.
-#
-# Uncomment Celery dependencies only after:
-#
-# 1. Worker settings are enabled in ``app/core/config.py``.
-# 2. Worker infrastructure under ``app/worker`` is activated.
-# 3. A broker is available.
-# 4. Task routing, lifecycle, signals, and task modules are tested.
-# 5. A separate worker process or container is configured.
-#
-# Redis should be uncommented above when it is selected as the Celery broker or
-# result backend.
+# Redis is installed above as the Celery broker transport. API-only deployments
+# can leave background jobs disabled; deploy worker and Beat as separate
+# processes when notification delivery or scheduled maintenance is enabled.
 # =============================================================================
 
-# celery>=5.5,<6.0
+celery[redis]>=5.5,<6.0
+cryptography>=42,<46
 
 
 # =============================================================================

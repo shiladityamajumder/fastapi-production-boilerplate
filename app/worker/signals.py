@@ -383,3 +383,63 @@
 #     "shutdown_worker_process",
 #     "validate_worker_startup",
 # ]
+
+"""Active Celery process lifecycle signal handlers."""
+
+from __future__ import annotations
+
+from celery.signals import (
+    beat_init,
+    setup_logging as celery_setup_logging,
+    worker_init,
+    worker_process_init,
+    worker_process_shutdown,
+    worker_shutdown,
+)
+
+from app.core.config import get_settings
+from app.core.logging import get_logger, setup_logging, shutdown_logging
+from app.worker.runtime import worker_runtime
+
+logger = get_logger(__name__)
+_registered = False
+
+
+def _configure_logging(**_: object) -> None:
+    """Use the application's structured logging in Celery processes."""
+    setup_logging(get_settings())
+
+
+def _validate_worker(**_: object) -> None:
+    """Fail worker startup when background processing is not enabled."""
+    if not get_settings().BACKGROUND_JOBS_ENABLED:
+        raise RuntimeError("BACKGROUND_JOBS_ENABLED must be true for Celery")
+
+
+def _start_worker_process(**_: object) -> None:
+    """Initialize process-local async resources after Celery prefork."""
+    worker_runtime.start()
+
+
+def _stop_worker_process(**_: object) -> None:
+    """Close process-local async resources on graceful worker shutdown."""
+    worker_runtime.close()
+
+
+def register_worker_signals() -> None:
+    """Register worker lifecycle handlers exactly once per process."""
+    global _registered
+    if _registered:
+        return
+    celery_setup_logging.connect(_configure_logging, weak=False)
+    worker_init.connect(_validate_worker, weak=False)
+    beat_init.connect(_validate_worker, weak=False)
+    worker_process_init.connect(_start_worker_process, weak=False)
+    worker_process_shutdown.connect(_stop_worker_process, weak=False)
+    worker_shutdown.connect(_stop_worker_process, weak=False)
+    _registered = True
+
+
+register_worker_signals()
+
+__all__ = ["register_worker_signals"]

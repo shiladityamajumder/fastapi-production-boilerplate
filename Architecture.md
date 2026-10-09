@@ -1084,9 +1084,13 @@ Worker code lives under:
 app/worker/
 ```
 
-Celery is currently disabled.
+Background processing is implemented but disabled by default. Set
+`BACKGROUND_JOBS_ENABLED=true` to activate the Redis-backed Celery runtime, and
+run API, worker, and Beat as separate processes. Email and SMS delivery also
+require their service flags, provider settings, PostgreSQL, and the encrypted
+transactional outbox configuration.
 
-### Future Worker Structure
+### Worker Runtime Layout
 
 ```text
 app/worker/
@@ -1327,10 +1331,69 @@ The authentication service should own token issuance and validation rules.
 
 ## 🗃️ 29. Database Migrations
 
+### User authentication boundaries
+
+`app/modules/auth` follows the feature convention: SQLAlchemy models and
+repository methods own persistence, `AuthService` owns account and token rules,
+Pydantic schemas validate public inputs, and the router uses injected
+PostgreSQL Unit of Work and current-user dependencies. Every protected request
+reloads its active account and role from PostgreSQL. Public registration fixes
+the role to `USER`. Central permission constants map `USER`, `ADMIN`, and
+`SUPER_ADMIN` to the least privileges required by the admin API; only
+`SUPER_ADMIN` can assign administrative roles.
+
+Admin account and role changes use a transaction-scoped PostgreSQL advisory
+lock, row locks, token-version increments, and refresh-session revocation.
+Changes and their audit events commit together. The lock also protects the last
+active `SUPER_ADMIN` invariant across concurrent requests and bootstrap CLI
+invocations. Audit records are append-only through application repositories and
+read-only API routes; metadata is allowlisted to prevent credential or token
+values from entering the log.
+
+Refresh tokens, action tokens, and OTPs are stored as digests. Refresh rotation
+locks the existing row and revokes a token family on reuse. OTP and action
+challenges carry expiry, attempt, consume, and revoke state. PostgreSQL fixed
+window counters rate-limit authentication across API processes. Short-lived
+access JWTs include a per-user token version so logout-all and password changes
+invalidate already-issued access tokens.
+
+Email, SMS, and private S3 adapters are selected independently through settings.
+Disabled implementations fail closed, while enabled boto3 adapters use cached
+clients and run blocking SDK calls in worker threads. Tests inject mocked SDK
+clients. Stored file metadata records its owner and remains unavailable until
+S3 confirms the signed upload's owner metadata, size, declared type, and content
+signature. Alembic imports feature models into shared `Base.metadata`; schema
+revisions remain an explicit operator action.
+
+### Background Delivery
+
+The API and worker share PostgreSQL through the existing auth repository and
+Unit of Work. OTP challenges, one-time action tokens, and encrypted
+`notification_outbox` rows commit together. Redis is the Celery broker; task
+results are ignored by default, and the result backend defaults to Redis only
+for Celery operations that require one. API startup does not connect to Redis
+or initialize Celery workers.
+
+Celery Beat dispatches bounded batches from PostgreSQL using
+`FOR UPDATE SKIP LOCKED`. Worker claims use row locks and leases. The worker
+creates AWS SES/SMS adapters in its own process and keeps blocking boto3 calls
+off the event loop. Transient provider failures return rows to `pending` with
+capped exponential backoff and jitter; permanent failures become `failed`.
+Notification payloads are Fernet-encrypted before storage. Logs contain only
+job IDs, request IDs, task kind, attempt count, and error class.
+
+Each Celery worker child owns one event loop and PostgreSQL pool, initialized
+after prefork and disposed on shutdown. Beat runs as a separate process and
+does not own database pools. Scheduled cleanup deletes expired OTP and action
+tokens and expired/revoked sessions in batches; audit logs are retained. Stale
+outbox leases are retried or marked failed, and old terminal jobs are removed
+according to retention settings.
+
 Alembic revisions in this repository are the reviewed source of schema changes.
 `migrations/env.py` uses the shared `app.db.base.Base.metadata` and imports
-existing model modules for autogeneration. No domain, user, or authentication
-models are introduced by the database foundation.
+each feature's model module for autogeneration. The auth feature owns its
+`users`, authentication-state, owner-scoped `stored_files`, and `audit_logs`
+tables in the shared metadata.
 
 ### Application Services Must Not
 
@@ -1718,15 +1781,12 @@ The API Gateway should not coordinate database rollback across services.
 
 ## 🔮 38. Future Architecture Extensions
 
-The architecture supports later addition of:
+The architecture can support later addition of:
 
 * Redis caching,
 * distributed locks,
 * idempotency storage,
-* Celery background processing,
-* Celery Beat scheduling,
 * domain events,
-* transactional outbox,
 * inbox deduplication,
 * OpenTelemetry tracing,
 * application metrics,

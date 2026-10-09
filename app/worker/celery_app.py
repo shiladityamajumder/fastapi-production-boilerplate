@@ -190,3 +190,36 @@
 #     "celery_beat_app",
 #     "create_celery_app",
 # ]
+
+"""Celery app entry points for independent worker and Beat processes."""
+
+from __future__ import annotations
+
+from celery import Celery
+
+from app.core.config import AppSettings, get_settings
+from app.worker.config import build_celery_settings
+from app.worker.signals import register_worker_signals
+
+
+def create_celery_app(settings: AppSettings | None = None) -> Celery:
+    """Create Celery configuration without contacting Redis or PostgreSQL."""
+    resolved = settings or get_settings()
+    app = Celery("fastapi_service")
+    app.conf.update(build_celery_settings(resolved))
+    app.conf.update(
+        include=[
+            "app.worker.tasks.notifications",
+            "app.worker.tasks.maintenance",
+            "app.worker.tasks.health",
+        ]
+    )
+    app.set_default()
+    app.autodiscover_tasks(["app.worker.tasks"])
+    return app
+
+
+celery_app = create_celery_app()
+register_worker_signals()
+
+__all__ = ["celery_app", "create_celery_app"]

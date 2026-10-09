@@ -216,3 +216,18 @@
 #     "get_beat_schedule",
 #     "validate_beat_schedule",
 # ]
+
+"""Active Celery Beat schedule accessors."""
+
+from app.core.config import get_settings
+from app.worker.config import build_celery_settings
+
+BEAT_SCHEDULE = build_celery_settings(get_settings())["beat_schedule"]
+
+
+def get_beat_schedule() -> dict[str, object]:
+    """Return the configured periodic schedule without opening connections."""
+    return BEAT_SCHEDULE
+
+
+__all__ = ["BEAT_SCHEDULE", "get_beat_schedule"]

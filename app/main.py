@@ -17,7 +17,7 @@ from fastapi import FastAPI
 from app.api.exception_handlers import register_exception_handlers
 from app.api.health import router as health_router
 from app.api.v1.router import router as api_v1_router
-from app.common.response import APIResponse
+from app.common.response import APIResponse, APIResponseModel
 from app.core.config import (
     AppSettings,
     Environment,
@@ -91,6 +91,8 @@ def create_app(
         "/",
         tags=["System"],
         summary="Service descriptor",
+        description="Returns non-sensitive service and API discovery information.",
+        response_model=APIResponseModel[dict[str, str | None]],
         include_in_schema=docs_enabled,
     )
     async def root():

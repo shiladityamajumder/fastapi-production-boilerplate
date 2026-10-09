@@ -207,6 +207,50 @@ class APIResponseModel[DataT](APIModel):
         return normalized
 
 
+STANDARD_ERROR_RESPONSES = {
+    status.HTTP_400_BAD_REQUEST: {
+        "model": APIResponseModel[None],
+        "description": "The request could not be processed.",
+    },
+    status.HTTP_401_UNAUTHORIZED: {
+        "model": APIResponseModel[None],
+        "description": "Authentication is required or invalid.",
+    },
+    status.HTTP_403_FORBIDDEN: {
+        "model": APIResponseModel[None],
+        "description": "The caller lacks the required permission.",
+    },
+    status.HTTP_404_NOT_FOUND: {
+        "model": APIResponseModel[None],
+        "description": "The requested resource was not found.",
+    },
+    status.HTTP_409_CONFLICT: {
+        "model": APIResponseModel[None],
+        "description": "The request conflicts with the current resource state.",
+    },
+    status.HTTP_422_UNPROCESSABLE_CONTENT: {
+        "model": APIResponseModel[None],
+        "description": "Request validation failed.",
+    },
+    status.HTTP_500_INTERNAL_SERVER_ERROR: {
+        "model": APIResponseModel[None],
+        "description": "An unexpected server error occurred.",
+    },
+    status.HTTP_429_TOO_MANY_REQUESTS: {
+        "model": APIResponseModel[None],
+        "description": "The caller has exceeded a request limit.",
+    },
+    status.HTTP_503_SERVICE_UNAVAILABLE: {
+        "model": APIResponseModel[None],
+        "description": "A required service is temporarily unavailable.",
+    },
+    status.HTTP_504_GATEWAY_TIMEOUT: {
+        "model": APIResponseModel[None],
+        "description": "A required service did not respond in time.",
+    },
+}
+
+
 class APIResponse:
     """Build JSON responses using the canonical public API envelope.
 
@@ -399,4 +443,5 @@ __all__ = [
     "ErrorBody",
     "PaginationMeta",
     "ResponseMeta",
+    "STANDARD_ERROR_RESPONSES",
 ]

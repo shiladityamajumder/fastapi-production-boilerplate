@@ -16,14 +16,22 @@ Health routes remain outside the versioned API prefix.
 
 from __future__ import annotations
 
+from typing import Literal
+
 from fastapi import (
     APIRouter,
     Request,
     status,
 )
 from fastapi.responses import JSONResponse  # noqa: TC002
+from pydantic import Field
 
-from app.common.response import APIResponse
+from app.common.response import (
+    APIModel,
+    APIResponse,
+    APIResponseModel,
+    STANDARD_ERROR_RESPONSES,
+)
 from app.core.config import AppSettings
 from app.db.registry import (
     DatabaseRegistry,
@@ -33,7 +41,35 @@ from app.db.registry import (
 router = APIRouter(
     prefix="/health",
     tags=["Health"],
+    responses=STANDARD_ERROR_RESPONSES,
 )
+
+
+class HealthCheckPayload(APIModel):
+    """Safe status for one enabled infrastructure dependency."""
+
+    healthy: bool
+    duration_ms: float | None = Field(default=None, ge=0)
+
+
+class LivenessPayload(APIModel):
+    """Liveness state independent of infrastructure availability."""
+
+    status: Literal["alive"]
+
+
+class ReadinessPayload(APIModel):
+    """Traffic readiness and sanitized enabled dependency checks."""
+
+    ready: bool
+    checks: dict[str, HealthCheckPayload]
+
+
+class DeepHealthPayload(APIModel):
+    """Detailed, sanitized dependency health data."""
+
+    healthy: bool
+    checks: dict[str, HealthCheckPayload]
 
 
 def _get_health_dependencies(
@@ -119,6 +155,8 @@ def _serialize_checks(
 @router.get(
     "/live",
     summary="Process liveness",
+    description="Reports process liveness without querying external dependencies.",
+    response_model=APIResponseModel[LivenessPayload],
 )
 async def liveness() -> JSONResponse:
     """Return success when the ASGI process can serve requests.
@@ -141,6 +179,10 @@ async def liveness() -> JSONResponse:
 @router.get(
     "/ready",
     summary="Traffic readiness",
+    description=(
+        "Checks PostgreSQL and other enabled dependencies before traffic is routed."
+    ),
+    response_model=APIResponseModel[ReadinessPayload],
 )
 async def readiness(
     request: Request,
@@ -218,6 +260,10 @@ async def readiness(
 @router.get(
     "/deep",
     summary="Detailed infrastructure diagnostics",
+    description=(
+        "Returns sanitized status for enabled dependencies without connection details."
+    ),
+    response_model=APIResponseModel[DeepHealthPayload],
 )
 async def deep_health(
     request: Request,

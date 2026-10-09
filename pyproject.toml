@@ -85,6 +85,7 @@ classifiers = [
 
 [project.scripts]
 fastapi-service = "app.main:run"
+create-admin = "app.modules.auth.cli:main"
 
 
 # =============================================================================
